@@ -467,16 +467,46 @@ class _ScanPageState extends State<ScanPage> with SingleTickerProviderStateMixin
   Widget _buildReceiptTab() {
     return Column(
       children: [
+        // Header Section
+        Container(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Scan Your Receipt',
+                style: TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                  color: _themeService.isDarkMode 
+                      ? ThemeService.darkTextPrimary 
+                      : const Color(0xFF2C3E50),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Quickly add items to your fridge by scanning receipts',
+                style: TextStyle(
+                  fontSize: 16,
+                  color: _themeService.isDarkMode 
+                      ? ThemeService.darkTextSecondary 
+                      : const Color(0xFF7F8C8D),
+                ),
+              ),
+            ],
+          ),
+        ),
+
         if (_err != null)
           Container(
-            margin: const EdgeInsets.all(16),
-            padding: const EdgeInsets.all(12),
+            margin: const EdgeInsets.symmetric(horizontal: 20),
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: const Color(0xFFE74C3C).withOpacity(0.1),
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(16),
               border: Border.all(
                 color: const Color(0xFFE74C3C).withOpacity(0.3),
-                width: 1,
+                width: 1.5,
               ),
             ),
             child: Row(
@@ -484,9 +514,9 @@ class _ScanPageState extends State<ScanPage> with SingleTickerProviderStateMixin
                 const Icon(
                   Icons.error_outline_rounded,
                   color: Color(0xFFE74C3C),
-                  size: 20,
+                  size: 24,
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Text(
                     _err!,
@@ -500,6 +530,35 @@ class _ScanPageState extends State<ScanPage> with SingleTickerProviderStateMixin
               ],
             ),
           ),
+        
+        const SizedBox(height: 16),
+        
+        // Scan Options Cards
+        if (_preview.isEmpty && !_busy) ...[
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Column(
+              children: [
+                _buildScanOptionCard(
+                  icon: Icons.photo_library_rounded,
+                  iconColor: const Color(0xFF9B59B6),
+                  title: 'Choose from Gallery',
+                  description: 'Select a photo of your receipt',
+                  onTap: () => _pickAndProcess(ImageSource.gallery),
+                ),
+                const SizedBox(height: 16),
+                _buildScanOptionCard(
+                  icon: Icons.camera_alt_rounded,
+                  iconColor: const Color(0xFF3498DB),
+                  title: 'Take a Photo',
+                  description: 'Capture your receipt with camera',
+                  onTap: () => _pickAndProcess(ImageSource.camera),
+                ),
+              ],
+            ),
+          ),
+        ],
+        
         Expanded(
           child: _busy
               ? Center(
@@ -507,23 +566,42 @@ class _ScanPageState extends State<ScanPage> with SingleTickerProviderStateMixin
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Container(
-                        padding: const EdgeInsets.all(20),
+                        padding: const EdgeInsets.all(24),
                         decoration: BoxDecoration(
-                          color: const Color(0xFF27AE60).withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(20),
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF27AE60), Color(0xFF2ECC71)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(24),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFF27AE60).withOpacity(0.3),
+                              blurRadius: 20,
+                              offset: const Offset(0, 8),
+                            ),
+                          ],
                         ),
                         child: const CircularProgressIndicator(
-                          valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF27AE60)),
+                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                           strokeWidth: 3,
                         ),
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 24),
                       Text(
                         'Processing receipt...',
                         style: TextStyle(
+                          color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : const Color(0xFF2C3E50),
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'This may take a few seconds',
+                        style: TextStyle(
                           color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : const Color(0xFF7F8C8D),
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
+                          fontSize: 14,
                         ),
                       ),
                     ],
@@ -533,131 +611,223 @@ class _ScanPageState extends State<ScanPage> with SingleTickerProviderStateMixin
                   ? _buildEmptyState()
                   : _buildItemsList(),
         ),
-        Container(
-          margin: const EdgeInsets.only(top: 20),
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: _themeService.isDarkMode ? ThemeService.darkCardBackground : Colors.white,
-            borderRadius: const BorderRadius.only(
-              topLeft: Radius.circular(20),
-              topRight: Radius.circular(20),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(_themeService.isDarkMode ? 0.3 : 0.1),
-                blurRadius: 10,
-                offset: const Offset(0, -2),
+        
+        // Action Buttons
+        if (_preview.isNotEmpty) 
+          Container(
+            margin: const EdgeInsets.only(top: 8),
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: _themeService.isDarkMode ? ThemeService.darkCardBackground : Colors.white,
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(24),
+                topRight: Radius.circular(24),
               ),
-            ],
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child:                   _buildActionButton(
-                      icon: Icons.photo_library_rounded,
-                      label: 'Gallery',
-                      color: _themeService.isDarkMode ? const Color(0xFFBB6BD9) : const Color(0xFF9B59B6),
-                      onPressed: _busy ? null : () => _pickAndProcess(ImageSource.gallery),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child:                     _buildActionButton(
-                      icon: Icons.camera_alt_rounded,
-                      label: 'Camera',
-                      color: _themeService.isDarkMode ? const Color(0xFF5DADE2) : const Color(0xFF3498DB),
-                      onPressed: _busy ? null : () => _pickAndProcess(ImageSource.camera),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _buildActionButton(
-                      icon: _busy 
-                        ? null 
-                        : Icons.check_circle_rounded,
-                      label: _busy ? 'Saving...' : 'Save All',
-                      color: _themeService.isDarkMode ? const Color(0xFF58D68D) : const Color(0xFF27AE60),
-                      onPressed: (_preview.isEmpty || _busy) ? null : _saveAll,
-                      isLoading: _busy,
-                    ),
-                  ),
-                ],
-              ),
-              if (_preview.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                  _buildActionButton(
-                  icon: Icons.clear_all_rounded,
-                  label: 'Clear Preview',
-                  color: _themeService.isDarkMode ? const Color(0xFFFF6B6B) : const Color(0xFFE74C3C),
-                  onPressed: _busy ? null : _clearPreview,
-                  isFullWidth: true,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(_themeService.isDarkMode ? 0.3 : 0.1),
+                  blurRadius: 20,
+                  offset: const Offset(0, -4),
                 ),
               ],
-            ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildModernActionButton(
+                        icon: Icons.check_circle_rounded,
+                        label: _busy ? 'Saving...' : 'Save All',
+                        color: const Color(0xFF27AE60),
+                        onPressed: _busy ? null : _saveAll,
+                        isLoading: _busy,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _buildModernActionButton(
+                        icon: Icons.clear_all_rounded,
+                        label: 'Clear',
+                        color: const Color(0xFFE74C3C),
+                        onPressed: _busy ? null : _clearPreview,
+                        isSecondary: true,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
-        ),
       ],
     );
   }
 
-  Widget _buildActionButton({
-    required IconData? icon,
+  Widget _buildScanOptionCard({
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required String description,
+    required VoidCallback onTap,
+  }) {
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: _themeService.isDarkMode 
+                  ? [
+                      ThemeService.darkCardBackground, 
+                      ThemeService.darkCardBackground.withOpacity(0.8)
+                    ]
+                  : [Colors.white, iconColor.withOpacity(0.05)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: iconColor.withOpacity(0.2),
+              width: 1.5,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: iconColor.withOpacity(0.15),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: iconColor.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Icon(
+                  icon,
+                  size: 32,
+                  color: iconColor,
+                ),
+              ),
+              const SizedBox(width: 20),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: _themeService.isDarkMode 
+                            ? ThemeService.darkTextPrimary 
+                            : const Color(0xFF2C3E50),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      description,
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: _themeService.isDarkMode 
+                            ? ThemeService.darkTextSecondary 
+                            : const Color(0xFF7F8C8D),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.arrow_forward_ios_rounded,
+                size: 20,
+                color: _themeService.isDarkMode 
+                    ? ThemeService.darkTextSecondary 
+                    : const Color(0xFFBDC3C7),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildModernActionButton({
+    required IconData icon,
     required String label,
     required Color color,
     required VoidCallback? onPressed,
     bool isLoading = false,
-    bool isFullWidth = false,
+    bool isSecondary = false,
   }) {
-    Widget button = Container(
-      height: 48,
+    return Container(
+      height: 56,
       decoration: BoxDecoration(
-        color: onPressed != null ? color : color.withOpacity(0.3),
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: onPressed != null ? [
-          BoxShadow(
-            color: color.withOpacity(0.3),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ] : null,
+        gradient: !isSecondary && onPressed != null
+            ? LinearGradient(
+                colors: [color, color.withOpacity(0.8)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              )
+            : null,
+        color: isSecondary
+            ? (onPressed != null ? color.withOpacity(0.1) : color.withOpacity(0.05))
+            : null,
+        borderRadius: BorderRadius.circular(16),
+        border: isSecondary
+            ? Border.all(color: color.withOpacity(0.3), width: 1.5)
+            : null,
+        boxShadow: !isSecondary && onPressed != null
+            ? [
+                BoxShadow(
+                  color: color.withOpacity(0.3),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ]
+            : null,
       ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(16),
           onTap: onPressed,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Center(
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                if (icon != null && !isLoading) ...[
-                  Icon(
-                    icon,
-                    color: Colors.white,
-                    size: 18,
-                  ),
-                  const SizedBox(width: 8),
-                ],
                 if (isLoading)
-                  const SizedBox(
-                    width: 18,
-                    height: 18,
+                  SizedBox(
+                    width: 20,
+                    height: 20,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        isSecondary ? color : Colors.white,
+                      ),
                     ),
+                  )
+                else
+                  Icon(
+                    icon,
+                    color: isSecondary ? color : Colors.white,
+                    size: 20,
                   ),
-                if (isLoading) const SizedBox(width: 8),
+                const SizedBox(width: 8),
                 Text(
                   label,
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: isSecondary ? color : Colors.white,
                     fontWeight: FontWeight.w600,
-                    fontSize: 14,
+                    fontSize: 16,
                   ),
                 ),
               ],
@@ -666,169 +836,167 @@ class _ScanPageState extends State<ScanPage> with SingleTickerProviderStateMixin
         ),
       ),
     );
-
-    if (isFullWidth) {
-      return SizedBox(width: double.infinity, child: button);
-    }
-    return button;
   }
 
   Widget _buildEmptyState() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(32),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF27AE60), Color(0xFF2ECC71)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(24),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFF27AE60).withOpacity(0.3),
-                    blurRadius: 20,
-                    offset: const Offset(0, 8),
-                  ),
-                ],
-              ),
-              child: const Icon(
-                Icons.receipt_long_rounded,
-                size: 64,
-                color: Colors.white,
-              ),
-            ),
-            const SizedBox(height: 24),
-            Text(
-              'Ready to Scan',
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-                color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : const Color(0xFF2C3E50),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Take a photo of your receipt to automatically add items to your fridge',
-              style: TextStyle(
-                fontSize: 16,
-                color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : const Color(0xFF7F8C8D),
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      ),
-    );
+    return const SizedBox.shrink();
   }
 
   Widget _buildItemsList() {
     return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
       itemCount: _preview.length,
       itemBuilder: (_, i) {
         final it = _preview[i];
         final isSelected = _selectedItems.contains(i);
         
-        return Container(
-          margin: const EdgeInsets.only(bottom: 12),
-          decoration: BoxDecoration(
-            color: _themeService.isDarkMode ? ThemeService.darkCardBackground : Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            border: _isSelectionMode && isSelected 
-              ? Border.all(color: const Color(0xFF27AE60), width: 2)
-              : null,
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(_themeService.isDarkMode ? 0.2 : 0.06),
-                blurRadius: 10,
-                offset: const Offset(0, 2),
+        return Card(
+          margin: const EdgeInsets.only(bottom: 16),
+          elevation: 0,
+          color: Colors.transparent,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          child: Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: _themeService.isDarkMode 
+                    ? [ThemeService.darkCardBackground, ThemeService.darkCardBackground.withOpacity(0.8)]
+                    : [Colors.white, const Color(0xFFF8F9FA)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
               ),
-            ],
-          ),
-          child: ListTile(
-            contentPadding: const EdgeInsets.all(16),
-            leading: _isSelectionMode 
-              ? Checkbox(
-                  value: isSelected,
-                  onChanged: (_) => _toggleItemSelection(i),
-                  activeColor: const Color(0xFF27AE60),
-                )
-              : null,
-            title: Text(
-              it.name,
-              style: TextStyle(
-                fontWeight: FontWeight.w600,
-                color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : const Color(0xFF2C3E50),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: _isSelectionMode && isSelected 
+                    ? const Color(0xFF27AE60)
+                    : const Color(0xFF27AE60).withOpacity(0.2),
+                width: _isSelectionMode && isSelected ? 2 : 1.5,
               ),
-            ),
-            subtitle: Container(
-              margin: const EdgeInsets.only(top: 4),
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              decoration: BoxDecoration(
-                color: _themeService.isDarkMode 
-                    ? const Color(0xFF2C3E50).withOpacity(0.3)
-                    : const Color(0xFFE8F4FD),
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(
-                  color: _themeService.isDarkMode ? const Color(0xFF7BB3F0) : const Color(0xFF3498DB),
-                  width: 1,
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF27AE60).withOpacity(0.1),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
                 ),
-              ),
-              child: Text(
-                'Qty: ${it.quantity}',
-                style: TextStyle(
-                  color: _themeService.isDarkMode 
-                      ? const Color(0xFF7BB3F0)
-                      : const Color(0xFF3498DB),
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
+              ],
             ),
-            trailing: _isSelectionMode 
-              ? null
-              : Row(
-                  mainAxisSize: MainAxisSize.min,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(20),
+              onTap: _isSelectionMode ? () => _toggleItemSelection(i) : null,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
                   children: [
-                    Container(
-                      decoration: BoxDecoration(
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkCardBackground
-                            : const Color(0xFFF8F9FA),
-                        borderRadius: BorderRadius.circular(12),
+                    if (_isSelectionMode) ...[
+                      Checkbox(
+                        value: isSelected,
+                        onChanged: (_) => _toggleItemSelection(i),
+                        activeColor: const Color(0xFF27AE60),
                       ),
-                      child: IconButton(
-                        icon: Icon(
-                          Icons.edit_rounded,
-                          color: _themeService.isDarkMode ? const Color(0xFF7BB3F0) : const Color(0xFF4A90E2),
+                      const SizedBox(width: 12),
+                    ] else ...[
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF27AE60).withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(12),
                         ),
-                        onPressed: () => _editParsedItem(i),
+                        child: const Icon(
+                          Icons.receipt_long_rounded,
+                          color: Color(0xFF27AE60),
+                          size: 24,
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                    ],
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            it.name,
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                              color: _themeService.isDarkMode 
+                                  ? ThemeService.darkTextPrimary 
+                                  : const Color(0xFF2C3E50),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF3498DB).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: const Color(0xFF3498DB).withOpacity(0.3),
+                                width: 1,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.inventory_2_rounded,
+                                  size: 14,
+                                  color: Color(0xFF3498DB),
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'Qty: ${it.quantity}',
+                                  style: const TextStyle(
+                                    color: Color(0xFF3498DB),
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkCardBackground
-                            : const Color(0xFFF8F9FA),
-                        borderRadius: BorderRadius.circular(12),
+                    if (!_isSelectionMode)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF3498DB).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: IconButton(
+                              icon: const Icon(
+                                Icons.edit_rounded,
+                                color: Color(0xFF3498DB),
+                                size: 20,
+                              ),
+                              onPressed: () => _editParsedItem(i),
+                              tooltip: 'Edit',
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFE74C3C).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: IconButton(
+                              icon: const Icon(
+                                Icons.delete_rounded,
+                                color: Color(0xFFE74C3C),
+                                size: 20,
+                              ),
+                              onPressed: () => _deleteParsedItem(i),
+                              tooltip: 'Delete',
+                            ),
+                          ),
+                        ],
                       ),
-                      child: IconButton(
-                        icon: Icon(
-                          Icons.delete_rounded,
-                          color: _themeService.isDarkMode ? const Color(0xFFE57373) : const Color(0xFFE74C3C),
-                        ),
-                        onPressed: () => _deleteParsedItem(i),
-                      ),
-                    ),
                   ],
                 ),
-            onTap: _isSelectionMode ? () => _toggleItemSelection(i) : null,
+              ),
+            ),
           ),
         );
       },
