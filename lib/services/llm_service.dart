@@ -207,6 +207,7 @@ $itemName$context ->''';
     String? cuisineType,
     String? keyword,
     String? cookingTool,
+    bool strictMode = false,
   }) async {
     if (ingredients.isEmpty) {
       return [];
@@ -223,6 +224,7 @@ $itemName$context ->''';
         cuisineType,
         keyword,
         cookingTool,
+        strictMode,
       );
       final response = await _callOpenAIForRecipes(prompt);
 
@@ -247,6 +249,7 @@ $itemName$context ->''';
     String? cuisineType,
     String? keyword,
     String? cookingTool,
+    bool strictMode,
   ) {
     // Handle empty fridge case
     if (ingredients.isEmpty) {
@@ -345,7 +348,7 @@ JSON format:
     
     String keywordInstruction = '';
     if (keyword != null && keyword.trim().isNotEmpty) {
-      keywordInstruction = '\n\nUSER REQUEST: The user wants to make "$keyword" or something similar. Try to create recipes that match this request using the available ingredients. Be creative if exact ingredients aren\'t available.';
+      keywordInstruction = '\n\n🔴 CRITICAL USER REQUEST (HIGHEST PRIORITY): The user SPECIFICALLY wants to make "$keyword". This is a STRICT REQUIREMENT - you MUST create this exact dish or a very close variant using available ingredients. Only if it\'s completely impossible should you fallback to alternative recipes. The keyword is LAW - prioritize matching it above all other constraints.';
     }
     
     String cookingToolInstruction = '';
@@ -375,9 +378,14 @@ JSON format:
       }
     }
     
+    // Pantry staples based on strict mode
+    final pantryStaples = strictMode 
+        ? 'salt, pepper, oil (STRICT MODE: NO OTHER PANTRY STAPLES ALLOWED)'
+        : 'salt, pepper, oil, butter, garlic, onions, flour, sugar, vinegar, soy sauce';
+    
     return '''Create $count recipes using: $ingredientsList$keywordInstruction$modeInstruction$cuisineInstruction$cookingToolInstruction$categoryInstruction$priorityInstruction$prioritizedItemsInstruction
 
-Pantry staples available: salt, pepper, oil, butter, garlic, onions, flour, sugar, vinegar, soy sauce
+Pantry staples available: $pantryStaples
 
 JSON format:
 {
@@ -392,8 +400,8 @@ JSON format:
 }
 
 Rules:
-- Use fridge items + pantry staples
-- Focus on taste, not using everything
+- Use fridge items + pantry staples${strictMode ? ' (STRICT: only salt, pepper, oil allowed as pantry staples)' : ''}
+- ${keyword != null && keyword.trim().isNotEmpty ? '🔴 CRITICAL: Make "$keyword" if at all possible - this is the TOP PRIORITY' : 'Focus on taste, not using everything'}
 - 4-6 instruction steps
 - Minimal shopping (1-3 items max)
 - Simple, delicious recipes''';

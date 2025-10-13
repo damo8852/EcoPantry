@@ -46,6 +46,7 @@ class _RecipesHubScreenState extends State<RecipesHubScreen> {
     String cuisineType = 'any';
     String recipeKeyword = '';
     String cookingTool = 'any';
+    bool strictMode = false;
     final keywordController = TextEditingController();
     
     final options = await showDialog<Map<String, dynamic>>(
@@ -200,6 +201,30 @@ class _RecipesHubScreenState extends State<RecipesHubScreen> {
                             });
                           },
                         ),
+                        
+                        const SizedBox(height: 24),
+                        
+                        CheckboxListTile(
+                          title: Text(
+                            'Strict Mode',
+                            style: TextStyle(
+                              color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : ThemeService.lightTextPrimary,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          subtitle: Text(
+                            'Only use available ingredients + salt, pepper, oil (no other pantry staples)',
+                            style: TextStyle(
+                              color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary,
+                              fontSize: 13,
+                            ),
+                          ),
+                          value: strictMode,
+                          activeColor: const Color(0xFF3498DB),
+                          onChanged: (value) => setDialogState(() => strictMode = value ?? false),
+                          controlAffinity: ListTileControlAffinity.leading,
+                          contentPadding: EdgeInsets.zero,
+                        ),
                       ],
                     ),
                   ),
@@ -234,6 +259,7 @@ class _RecipesHubScreenState extends State<RecipesHubScreen> {
                             'cuisineType': cuisineType,
                             'keyword': recipeKeyword,
                             'cookingTool': cookingTool,
+                            'strictMode': strictMode,
                           }),
                           icon: const Icon(Icons.auto_awesome),
                           label: const Text('Generate Recipes'),
@@ -260,6 +286,7 @@ class _RecipesHubScreenState extends State<RecipesHubScreen> {
     final selectedCuisine = options['cuisineType'] as String;
     final keyword = options['keyword'] as String?;
     final selectedCookingTool = options['cookingTool'] as String?;
+    final isStrictMode = options['strictMode'] as bool? ?? false;
 
     // Show loading dialog
     if (!mounted) return;
@@ -304,6 +331,7 @@ class _RecipesHubScreenState extends State<RecipesHubScreen> {
           .get();
 
       final ingredients = snapshot.docs
+          .where((doc) => doc.data()['isFrozen'] != true) // Exclude frozen items
           .map((doc) => doc.data()['name']?.toString() ?? '')
           .where((name) => name.isNotEmpty)
           .toList();
@@ -316,6 +344,7 @@ class _RecipesHubScreenState extends State<RecipesHubScreen> {
         cuisineType: selectedCuisine != 'any' ? selectedCuisine : null,
         keyword: keyword != null && keyword.trim().isNotEmpty ? keyword : null,
         cookingTool: selectedCookingTool != null && selectedCookingTool != 'any' ? selectedCookingTool : null,
+        strictMode: isStrictMode,
       );
 
       if (!mounted) return;

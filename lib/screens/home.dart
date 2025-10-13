@@ -1,17 +1,19 @@
 ﻿import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:http/http.dart' as http;
 
 import '../services/auth.dart';
-import '../services/llm_service.dart';
 import '../services/notifications.dart';
 import '../services/theme_service.dart';
-import '../services/parser.dart';
+import '../services/config_service.dart';
 import '../widgets/item_tile.dart';
 import '../models/grocery_type.dart';
 import 'scan.dart';
 import 'recipes_hub_screen.dart';
+import 'collections_screen.dart';
 import 'auth_gate.dart';
 
 class HomePage extends StatefulWidget {
@@ -37,6 +39,11 @@ class _HomePageState extends State<HomePage> {
   
   // Must contain filter
   String _mustContainText = '';
+  
+  // Search filter
+  String _searchText = '';
+  bool _showFrozenItems = false;
+  bool _hideFrozenItems = true; // Default: hide frozen items
 
   @override
   void initState() {
@@ -403,19 +410,36 @@ class _HomePageState extends State<HomePage> {
   String _getFilterDisplayText() {
     final parts = <String>[];
     
-    if (_selectedFilters.isEmpty && _mustContainText.isEmpty) {
-      parts.add('All Items');
+    // Frozen items status
+    if (_showFrozenItems) {
+      parts.add('Only Frozen');
+    } else if (_hideFrozenItems) {
+      parts.add('Hide Frozen');
     } else {
-      if (_selectedFilters.isNotEmpty) {
-        parts.add('${_selectedFilters.length} Categories');
-      }
-      if (_mustContainText.isNotEmpty) {
-        parts.add('contains "$_mustContainText"');
-      }
+      parts.add('Show All');
+    }
+    
+    // Category filters
+    if (_selectedFilters.isNotEmpty) {
+      parts.add('${_selectedFilters.length} Categories');
+    }
+    
+    // Text search
+    if (_mustContainText.isNotEmpty) {
+      parts.add('contains "$_mustContainText"');
     }
     
     parts.add(_getSortDisplayName(_sortOption));
     return parts.join(' • ');
+  }
+
+  String _capitalizeWords(String text) {
+    if (text.isEmpty) return text;
+    
+    return text.split(' ').map((word) {
+      if (word.isEmpty) return word;
+      return word[0].toUpperCase() + word.substring(1).toLowerCase();
+    }).join(' ');
   }
 
   void _showCompactFilters() {
@@ -560,36 +584,84 @@ class _HomePageState extends State<HomePage> {
                 ),
               ),
               const SizedBox(height: 20),
-              // Multi-column filters
+              // Multi-column filters (scrollable)
               Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Column(
-                    children: [
-                      // Categories Column
-                      _buildFilterColumn(
-                        'CATEGORIES',
-                        Icons.category_rounded,
-                        GroceryType.allTypes.map((type) => _FilterOption(
-                          label: type.displayName,
-                          icon: _getGroceryIcon(type),
-                          color: _getGroceryColor(type),
-                          isSelected: _selectedFilters.contains(type),
-                          onTap: () {
-                            setState(() {
-                              if (_selectedFilters.contains(type)) {
-                                _selectedFilters.remove(type);
-                              } else {
-                                _selectedFilters.add(type);
-                              }
-                            });
-                            setDialogState(() {});
-                          },
-                        )).toList(),
-                      ),
-                      const SizedBox(height: 20),
-                      // Sort Column
-                      _buildFilterColumn(
+                child: SingleChildScrollView(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Column(
+                      children: [
+                        // Categories Column
+                        _buildFilterColumn(
+                          'CATEGORIES',
+                          Icons.category_rounded,
+                          GroceryType.allTypes.map((type) => _FilterOption(
+                            label: type.displayName,
+                            icon: _getGroceryIcon(type),
+                            color: _getGroceryColor(type),
+                            isSelected: _selectedFilters.contains(type),
+                            onTap: () {
+                              setState(() {
+                                if (_selectedFilters.contains(type)) {
+                                  _selectedFilters.remove(type);
+                                } else {
+                                  _selectedFilters.add(type);
+                                }
+                              });
+                              setDialogState(() {});
+                            },
+                          )).toList(),
+                        ),
+                        const SizedBox(height: 20),
+                        // Frozen Items Filter
+                        _buildFilterColumn(
+                          'FROZEN ITEMS',
+                          Icons.ac_unit_rounded,
+                          [
+                            _FilterOption(
+                              label: 'Hide Frozen',
+                              icon: Icons.visibility_off_rounded,
+                              color: const Color(0xFF00BCD4),
+                              isSelected: _hideFrozenItems && !_showFrozenItems,
+                              onTap: () {
+                                setState(() {
+                                  _hideFrozenItems = true;
+                                  _showFrozenItems = false;
+                                });
+                                setDialogState(() {});
+                              },
+                            ),
+                            _FilterOption(
+                              label: 'Show All Items',
+                              icon: Icons.visibility_rounded,
+                              color: const Color(0xFF00BCD4),
+                              isSelected: !_hideFrozenItems && !_showFrozenItems,
+                              onTap: () {
+                                setState(() {
+                                  _hideFrozenItems = false;
+                                  _showFrozenItems = false;
+                                });
+                                setDialogState(() {});
+                              },
+                            ),
+                            _FilterOption(
+                              label: 'Only Frozen',
+                              icon: Icons.ac_unit_rounded,
+                              color: const Color(0xFF00BCD4),
+                              isSelected: _showFrozenItems,
+                              onTap: () {
+                                setState(() {
+                                  _showFrozenItems = true;
+                                  _hideFrozenItems = false;
+                                });
+                                setDialogState(() {});
+                              },
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 20),
+                        // Sort Column
+                        _buildFilterColumn(
                         'SORT BY',
                         Icons.sort_rounded,
                         [
@@ -655,10 +727,12 @@ class _HomePageState extends State<HomePage> {
                           ),
                         ],
                       ),
+                      const SizedBox(height: 20), // Bottom padding for scrollable content
                     ],
                   ),
                 ),
               ),
+            ),
             ],
           ),
         ),
@@ -1155,7 +1229,10 @@ class _HomePageState extends State<HomePage> {
                     iconColor: const Color(0xFF9B59B6),
                     onTap: () {
                       Navigator.pop(context);
-                      _showFilterItemsDialog();
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const CollectionsScreen()),
+                      );
                     },
                   ),
                   
@@ -1492,15 +1569,20 @@ class _HomePageState extends State<HomePage> {
                 }
                 final docs = snap.data!.docs;
                 
-                // Filter items by frozen status (exclude frozen), grocery type and must contain text
+                // Filter items by frozen status, grocery type, must contain text, and search
                 final filteredDocs = docs.where((doc) {
                   final data = doc.data();
                   
-                  // Exclude frozen items from main view
+                  // Filter frozen items based on filter settings
                   final isFrozen = data['isFrozen'] == true;
-                  if (isFrozen) {
-                    return false;
+                  if (_showFrozenItems) {
+                    // Show only frozen items
+                    if (!isFrozen) return false;
+                  } else if (_hideFrozenItems) {
+                    // Hide frozen items
+                    if (isFrozen) return false;
                   }
+                  // If neither flag is set, show all items (including frozen)
                   
                   // Check grocery type filter
                   if (_selectedFilters.isNotEmpty) {
@@ -1510,10 +1592,11 @@ class _HomePageState extends State<HomePage> {
                     }
                   }
                   
-                  // Check must contain filter
-                  if (_mustContainText.isNotEmpty) {
+                  // Check search text (prioritize over mustContainText)
+                  final searchQuery = _searchText.isNotEmpty ? _searchText : _mustContainText;
+                  if (searchQuery.isNotEmpty) {
                     final itemName = (data['name'] ?? '').toString().toLowerCase();
-                    if (!itemName.contains(_mustContainText.toLowerCase())) {
+                    if (!itemName.contains(searchQuery.toLowerCase())) {
                       return false;
                     }
                   }
@@ -1585,63 +1668,103 @@ class _HomePageState extends State<HomePage> {
                       ),
                     ),
                     
-                    // Compact Filter Button
+                    // Search Bar
                     SliverToBoxAdapter(
                       child: Container(
-                        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: _themeService.isDarkMode ? ThemeService.darkCardBackground : ThemeService.lightCardBackground,
-                                  borderRadius: BorderRadius.circular(16),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(_themeService.isDarkMode ? 0.2 : 0.08),
-                                      blurRadius: 10,
-                                      offset: const Offset(0, 2),
+                        margin: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                        decoration: BoxDecoration(
+                          color: _themeService.isDarkMode ? ThemeService.darkCardBackground : ThemeService.lightCardBackground,
+                          borderRadius: BorderRadius.circular(16),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(_themeService.isDarkMode ? 0.2 : 0.08),
+                              blurRadius: 10,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: TextField(
+                          onChanged: (value) => setState(() => _searchText = value),
+                          style: TextStyle(
+                            color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : ThemeService.lightTextPrimary,
+                          ),
+                          decoration: InputDecoration(
+                            hintText: 'Search items...',
+                            hintStyle: TextStyle(
+                              color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary,
+                            ),
+                            prefixIcon: Icon(
+                              Icons.search_rounded,
+                              color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary,
+                            ),
+                            suffixIcon: _searchText.isNotEmpty 
+                              ? IconButton(
+                                  icon: Icon(
+                                    Icons.clear_rounded,
+                                    color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary,
+                                  ),
+                                  onPressed: () => setState(() => _searchText = ''),
+                                )
+                              : null,
+                            border: InputBorder.none,
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                          ),
+                        ),
+                      ),
+                    ),
+                    
+                    // Filter Button
+                    SliverToBoxAdapter(
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: _themeService.isDarkMode ? ThemeService.darkCardBackground : ThemeService.lightCardBackground,
+                            borderRadius: BorderRadius.circular(16),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(_themeService.isDarkMode ? 0.2 : 0.08),
+                                blurRadius: 10,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(16),
+                              onTap: () => _showCompactFilters(),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                child: Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.tune_rounded,
+                                      color: Color(0xFF4A90E2),
+                                      size: 20,
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Text(
+                                        _getFilterDisplayText(),
+                                        style: TextStyle(
+                                          color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : ThemeService.lightTextPrimary,
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                    Icon(
+                                      Icons.arrow_forward_ios_rounded,
+                                      color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary,
+                                      size: 16,
                                     ),
                                   ],
                                 ),
-                                child: Material(
-                                  color: Colors.transparent,
-                                  child: InkWell(
-                                    borderRadius: BorderRadius.circular(16),
-                                    onTap: () => _showCompactFilters(),
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                                      child: Row(
-                                        children: [
-                                          const Icon(
-                                            Icons.tune_rounded,
-                                            color: Color(0xFF4A90E2),
-                                            size: 20,
-                                          ),
-                                          const SizedBox(width: 12),
-                                          Expanded(
-                                            child: Text(
-                                              _getFilterDisplayText(),
-                                              style: TextStyle(
-                                                color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : ThemeService.lightTextPrimary,
-                                                fontSize: 14,
-                                                fontWeight: FontWeight.w500,
-                                              ),
-                                            ),
-                                          ),
-                                          Icon(
-                                            Icons.arrow_forward_ios_rounded,
-                                            color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary,
-                                            size: 16,
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ),
                               ),
                             ),
-                          ],
+                          ),
                         ),
                       ),
                     ),
@@ -1707,7 +1830,7 @@ class _HomePageState extends State<HomePage> {
                                     ),
                                   ),
                                   subtitle: Text(
-                                    'Qty: ${data['quantity'] ?? 1} • ${groceryType.displayName}',
+                                     'Qty: ${data['quantity'] ?? 1} • ${groceryType.displayName}',
                                     style: TextStyle(
                                       color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : const Color(0xFF7F8C8D),
                                     ),
@@ -1861,82 +1984,147 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _addItemDialog() async {
     final nameCtrl = TextEditingController();
-    final qtyCtrl = TextEditingController(text: '1');
-    DateTime expiry = DateTime.now().add(const Duration(days: 5));
-    GroceryType selectedType = GroceryType.other;
-    bool isPredicting = false;
+    bool isProcessing = false;
 
-    Future<void> predictExpiry() async {
-      final name = nameCtrl.text.trim();
-      if (name.isEmpty) return;
+    Future<void> parseAndSave(StateSetter setLocal) async {
+      final input = nameCtrl.text.trim();
+      if (input.isEmpty) return;
 
-      setState(() => isPredicting = true);
+      // Use LLM to parse the input text into individual items
+      final prompt = '''Parse food items from text. Return ONLY JSON.
+
+Examples:
+"apples, bananas, milk" → {"items": [{"name": "apples", "quantity": 1, "type": "fruit", "days": 7}, {"name": "bananas", "quantity": 1, "type": "fruit", "days": 5}, {"name": "milk", "quantity": 1, "type": "dairy", "days": 7}]}
+"2 chicken, bread" → {"items": [{"name": "chicken", "quantity": 2, "type": "poultry", "days": 3}, {"name": "bread", "quantity": 1, "type": "grain", "days": 7}]}
+
+Types: meat, poultry, seafood, vegetable, fruit, dairy, grain, beverage, snack, condiment, frozen, other
+
+Input: $input''';
 
       try {
-        final prediction = await LLMService().predictExpiryAndType(name);
-        if (prediction != null) {
-          final days = prediction['days'] as int?;
-          final type = prediction['type'] as String?;
+        final configService = ConfigService();
+        final apiKey = await configService.getOpenAiApiKey();
+        if (apiKey == null) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('OpenAI API key not configured')),
+            );
+          }
+          return;
+        }
 
-          if (days != null) {
-            setState(() {
-              expiry = DateTime.now().add(Duration(days: days));
-              if (type != null) {
-                selectedType = GroceryType.fromString(type);
+        final response = await http.post(
+          Uri.parse('https://api.openai.com/v1/chat/completions'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $apiKey',
+          },
+          body: json.encode({
+            'model': 'gpt-4o-mini',
+            'messages': [{'role': 'user', 'content': prompt}],
+            'temperature': 0.1,
+            'max_tokens': 1000,
+            'response_format': {'type': 'json_object'},
+          }),
+        ).timeout(const Duration(seconds: 15));
+
+        if (response.statusCode == 200) {
+          final data = json.decode(response.body);
+          final result = data['choices']?[0]?['message']?['content']?.toString().trim();
+          
+          if (result != null) {
+            final parsed = json.decode(result);
+            final items = parsed['items'] as List?;
+            
+            if (items != null && items.isNotEmpty) {
+              // Check for existing items
+              final existingItems = await _db
+                  .collection('users')
+                  .doc(user.uid)
+                  .collection('items')
+                  .get();
+              
+              final existingNames = existingItems.docs
+                  .map((doc) => (doc.data()['name'] ?? '').toString().toLowerCase())
+                  .toSet();
+              
+              final batch = _db.batch();
+              int addedCount = 0;
+              final skippedItems = <String>[];
+              
+              for (final item in items) {
+                final rawName = item['name']?.toString().trim() ?? '';
+                if (rawName.isEmpty) continue;
+                
+                // Capitalize the name (title case)
+                final name = _capitalizeWords(rawName);
+                
+                // Skip duplicates
+                if (existingNames.contains(name.toLowerCase())) {
+                  skippedItems.add(name);
+                  continue;
+                }
+                
+                final quantity = item['quantity'] as int? ?? 1;
+                final days = item['days'] as int? ?? 5;
+                final type = item['type']?.toString() ?? 'other';
+                final expiry = DateTime.now().add(Duration(days: days));
+                
+                final ref = _db.collection('users').doc(user.uid).collection('items').doc();
+                batch.set(ref, {
+                  'name': name,
+                  'quantity': quantity,
+                  'expiryDate': Timestamp.fromDate(expiry),
+                  'groceryType': type,
+                  'createdAt': FieldValue.serverTimestamp(),
+                  'updatedAt': FieldValue.serverTimestamp(),
+                  'source': 'manual',
+                });
+                
+                // Try to schedule notification (non-blocking - don't fail if permissions aren't granted)
+                try {
+                  await NotificationsService.instance.scheduleExpiryReminder(
+                    id: ref.id.hashCode,
+                    title: 'Use soon: $name',
+                    body: 'Expires tomorrow',
+                    when: expiry.subtract(const Duration(days: 1)),
+                  );
+                } catch (e) {
+                  print('Failed to schedule notification for $name: $e');
+                  // Continue anyway - item should still be added even if notification fails
+                }
+                
+                addedCount++;
               }
-            });
+              
+              await batch.commit();
+              
+              if (mounted) {
+                String message = 'Added $addedCount item(s)';
+                if (skippedItems.isNotEmpty) {
+                  message += '\nSkipped duplicates: ${skippedItems.join(', ')}';
+                }
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(message),
+                    backgroundColor: skippedItems.isNotEmpty ? Colors.orange : const Color(0xFF27AE60),
+                  ),
+                );
+              }
+            }
           }
         }
       } catch (e) {
-        print('Prediction error: $e');
-      } finally {
-        setState(() => isPredicting = false);
-      }
-    }
-
-    Future<void> save() async {
-      final name = nameCtrl.text.trim();
-      if (name.isEmpty) return;
-      
-      // Check for duplicates before adding
-      final existingItems = await _db
-          .collection('users')
-          .doc(user.uid)
-          .collection('items')
-          .get();
-      
-      final existingNames = existingItems.docs
-          .map((doc) => (doc.data()['name'] ?? '').toString().toLowerCase())
-          .toSet();
-      
-      if (existingNames.contains(name.toLowerCase())) {
+        print('Error parsing items: $e');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Item "$name" already exists in your fridge'),
-              backgroundColor: Colors.orange,
+              content: Text('Error adding items: ${e.toString()}'),
+              backgroundColor: Colors.red,
             ),
           );
         }
-        return;
       }
-      
-      final ref = _db.collection('users').doc(user.uid).collection('items').doc();
-      await ref.set({
-        'name': name,
-        'quantity': int.tryParse(qtyCtrl.text) ?? 1,
-        'expiryDate': Timestamp.fromDate(expiry),
-        'groceryType': selectedType.name,
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-        'source': 'manual',
-      });
-      await NotificationsService.instance.scheduleExpiryReminder(
-        id: ref.id.hashCode,
-        title: 'Use soon: $name',
-        body: 'Expires tomorrow',
-        when: expiry.subtract(const Duration(days: 1)),
-      );
     }
 
     await showDialog(
@@ -1945,131 +2133,61 @@ class _HomePageState extends State<HomePage> {
       builder: (_) {
         return StatefulBuilder(builder: (context, setLocal) {
           return AlertDialog(
-            title: const Text('Add Item'),
+            title: const Text('Add Items'),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: nameCtrl,
-                        decoration: const InputDecoration(labelText: 'Name'),
-                        onChanged: (value) {
-                          // Trigger prediction when name changes (with debounce)
-                          if (value.trim().isNotEmpty) {
-                            Future.delayed(const Duration(milliseconds: 1000), () {
-                              if (nameCtrl.text.trim() == value.trim()) {
-                                predictExpiry();
-                              }
-                            });
-                          }
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    IconButton(
-                      onPressed: () async {
-                        final name = nameCtrl.text.trim();
-                        if (name.isNotEmpty) {
-                          try {
-                            final simplifiedName = await ReceiptParser.simplifyFoodName(name);
-                            if (simplifiedName != name) {
-                              nameCtrl.text = simplifiedName;
-                              setLocal(() {});
-                              // Trigger prediction with simplified name
-                              Future.delayed(const Duration(milliseconds: 500), () {
-                                if (nameCtrl.text.trim() == simplifiedName) {
-                                  predictExpiry();
-                                }
-                              });
-                            }
-                          } catch (e) {
-                            print('AI simplification failed: $e');
-                          }
-                        }
-                      },
-                      icon: const Icon(Icons.auto_awesome),
-                      tooltip: 'Simplify name with AI',
-                    ),
-                  ],
-                ),
                 TextField(
-                  controller: qtyCtrl,
-                  decoration: const InputDecoration(labelText: 'Quantity'),
-                  keyboardType: TextInputType.number,
+                  controller: nameCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Item names',
+                    hintText: 'e.g., apples, milk, 2 chicken',
+                    helperText: 'Enter one or more items separated by commas',
+                  ),
+                  maxLines: 3,
+                  autofocus: true,
                 ),
                 const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: DropdownButtonFormField<GroceryType>(
-                        value: selectedType,
-                        decoration: const InputDecoration(labelText: 'Grocery Type'),
-                        items: GroceryType.allTypes.map((type) => DropdownMenuItem(
-                          value: type,
-                          child: Text(type.displayName),
-                        )).toList(),
-                        onChanged: (value) {
-                          if (value != null) setLocal(() => selectedType = value);
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    IconButton(
-                      onPressed: isPredicting ? null : () async {
-                        final name = nameCtrl.text.trim();
-                        if (name.isNotEmpty) {
-                          await predictExpiry();
-                        }
-                      },
-                      icon: isPredicting
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.auto_awesome),
-                      tooltip: 'Predict expiry with AI',
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                TextButton.icon(
-                  onPressed: () async {
-                    final picked = await showDatePicker(
-                      context: context,
-                      initialDate: expiry,
-                      firstDate: DateTime.now(),
-                      lastDate: DateTime.now().add(const Duration(days: 120)),
-                    );
-                    if (picked != null) setLocal(() => expiry = picked); // local state
-                  },
-                  icon: const Icon(Icons.calendar_month),
-                  label: Text('Expires ${expiry.toLocal().toString().split(' ').first}'),
+                Text(
+                  'AI will automatically categorize items and predict expiry dates',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[600],
+                    fontStyle: FontStyle.italic,
+                  ),
                 ),
               ],
             ),
             actions: [
-              TextButton(onPressed: () => Navigator.of(context, rootNavigator: true).pop(), child: const Text('Cancel')),
-              FilledButton(onPressed: () async {
-                try {
-                  final name = nameCtrl.text.trim();
-                  if (name.isNotEmpty) {
-                    await save();
+              TextButton(
+                onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: isProcessing ? null : () async {
+                  try {
+                    setLocal(() => isProcessing = true);
+                    await parseAndSave(setLocal);
+                  } finally {
+                    setLocal(() => isProcessing = false);
                   }
-                } catch (e) {
-                  // Handle any errors during save, but still close the dialog
-                  print('Error saving item: $e');
-                }
-                if (context.mounted) Navigator.of(context, rootNavigator: true).pop();
-              }, child: const Text('Save')),
+                  if (context.mounted) Navigator.of(context, rootNavigator: true).pop();
+                },
+                child: isProcessing
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Text('Add'),
+              ),
             ],
           );
         });
       },
     );
   }
+
 
   Future<void> _editItemDialog(
     DocumentReference<Map<String, dynamic>> ref,
@@ -2115,18 +2233,34 @@ class _HomePageState extends State<HomePage> {
                   },
                 ),
                 const SizedBox(height: 8),
-                TextButton.icon(
-                  onPressed: () async {
-                    final picked = await showDatePicker(
-                      context: context,
-                      initialDate: expiry,
-                      firstDate: DateTime.now(),
-                      lastDate: DateTime.now().add(const Duration(days: 120)),
-                    );
-                    if (picked != null) setLocal(() => expiry = picked);
-                  },
-                  icon: const Icon(Icons.calendar_month),
-                  label: Text('Expires ${expiry.toLocal().toString().split(' ').first}'),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: TextButton.icon(
+                        onPressed: () async {
+                          final picked = await showDatePicker(
+                            context: context,
+                            initialDate: expiry.year < 9000 ? expiry : DateTime.now().add(const Duration(days: 5)),
+                            firstDate: DateTime.now(),
+                            lastDate: DateTime(2100), // Extended to 2100
+                          );
+                          if (picked != null) setLocal(() => expiry = picked);
+                        },
+                        icon: const Icon(Icons.calendar_month),
+                        label: Text(
+                          expiry.year >= 9000 
+                              ? 'Never Expires' 
+                              : 'Expires ${expiry.toLocal().toString().split(' ').first}'
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    OutlinedButton(
+                      onPressed: () => setLocal(() => expiry = DateTime(9999)),
+                      child: const Text('Never'),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 16),
                 Text(
@@ -2304,545 +2438,6 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<void> _showFilterItemsDialog() async {
-    if (!mounted) return;
-
-    await showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(
-          'Collections',
-          style: TextStyle(
-            color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : ThemeService.lightTextPrimary,
-          ),
-        ),
-        backgroundColor: _themeService.isDarkMode ? ThemeService.darkCardBackground : Colors.white,
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Choose what type of items you want to view:',
-              style: TextStyle(
-                color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : ThemeService.lightTextPrimary,
-                fontSize: 16,
-              ),
-            ),
-            const SizedBox(height: 20),
-            
-            // Finished Items Option
-            ListTile(
-              leading: Icon(
-                Icons.check_circle_rounded,
-                color: const Color(0xFF27AE60),
-              ),
-              title: Text(
-                'Finished Items',
-                style: TextStyle(
-                  color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : ThemeService.lightTextPrimary,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              subtitle: Text(
-                'View your consumption history',
-                style: TextStyle(
-                  color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary,
-                ),
-              ),
-              onTap: () {
-                Navigator.of(context).pop();
-                _showFinishedItemsHistory();
-              },
-            ),
-            
-            // Frozen Items Option
-            ListTile(
-              leading: Icon(
-                Icons.ac_unit_rounded,
-                color: const Color(0xFF00BCD4),
-              ),
-              title: Text(
-                'Frozen Items',
-                style: TextStyle(
-                  color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : ThemeService.lightTextPrimary,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              subtitle: Text(
-                'View your frozen foods',
-                style: TextStyle(
-                  color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary,
-                ),
-              ),
-              onTap: () {
-                Navigator.of(context).pop();
-                _showFrozenItems();
-              },
-            ),
-            
-            // Priority Items Option
-            ListTile(
-              leading: Icon(
-                Icons.priority_high_rounded,
-                color: const Color(0xFFE74C3C),
-              ),
-              title: Text(
-                'Priority Items',
-                style: TextStyle(
-                  color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : ThemeService.lightTextPrimary,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              subtitle: Text(
-                'Items marked for recipes',
-                style: TextStyle(
-                  color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary,
-                ),
-              ),
-              onTap: () {
-                Navigator.of(context).pop();
-                _showPrioritizedItems();
-              },
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _showPrioritizedItems() async {
-    try {
-      final prioritizedItems = await _db
-          .collection('users')
-          .doc(user.uid)
-          .collection('items')
-          .where('isPrioritized', isEqualTo: true)
-          .get();
-
-      if (!mounted) return;
-
-      // Sort items by prioritizedAt manually
-      final sortedItems = prioritizedItems.docs.toList()
-        ..sort((a, b) {
-          final aTime = a.data()['prioritizedAt'] as Timestamp?;
-          final bTime = b.data()['prioritizedAt'] as Timestamp?;
-          
-          if (aTime == null && bTime == null) return 0;
-          if (aTime == null) return 1;
-          if (bTime == null) return -1;
-          
-          return bTime.compareTo(aTime); // Descending order
-        });
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: _themeService.isDarkMode 
-          ? ThemeService.darkCard 
-          : ThemeService.lightCard,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => DraggableScrollableSheet(
-        initialChildSize: 0.6,
-        minChildSize: 0.3,
-        maxChildSize: 0.9,
-        expand: false,
-        builder: (context, scrollController) => Column(
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              margin: const EdgeInsets.symmetric(vertical: 12),
-              decoration: BoxDecoration(
-                color: Colors.grey[300],
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.priority_high_rounded,
-                    color: const Color(0xFFE74C3C),
-                    size: 24,
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Prioritized Items',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: _themeService.isDarkMode 
-                          ? ThemeService.darkTextPrimary 
-                          : ThemeService.lightTextPrimary,
-                    ),
-                  ),
-                  const Spacer(),
-                  Text(
-                    '${sortedItems.length}',
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: _themeService.isDarkMode 
-                          ? ThemeService.darkTextSecondary 
-                          : ThemeService.lightTextSecondary,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(),
-            Expanded(
-              child: sortedItems.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.priority_high_outlined,
-                            size: 64,
-                            color: Colors.grey[400],
-                          ),
-                          const SizedBox(height: 16),
-                          Text(
-                            'No prioritized items',
-                            style: TextStyle(
-                              fontSize: 18,
-                              color: _themeService.isDarkMode 
-                                  ? ThemeService.darkTextSecondary 
-                                  : ThemeService.lightTextSecondary,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Prioritize items to see them here',
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: _themeService.isDarkMode 
-                                  ? ThemeService.darkTextSecondary 
-                                  : ThemeService.lightTextSecondary,
-                            ),
-                          ),
-                        ],
-                      ),
-                    )
-                  : ListView.builder(
-                      controller: scrollController,
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      itemCount: sortedItems.length,
-                      itemBuilder: (context, index) {
-                        final doc = sortedItems[index];
-                        final data = doc.data();
-                        final ref = doc.reference;
-                        
-                        return Card(
-                          margin: const EdgeInsets.symmetric(vertical: 4),
-                          color: _themeService.isDarkMode 
-                              ? ThemeService.darkBackground 
-                              : ThemeService.lightBackground,
-                          child: ListTile(
-                            leading: Icon(
-                              _getGroceryIcon(GroceryType.fromString(data['groceryType'] ?? 'other')),
-                              color: _getGroceryColor(GroceryType.fromString(data['groceryType'] ?? 'other')),
-                            ),
-                            title: Text(
-                              data['name'] ?? 'Unknown',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w600,
-                                color: _themeService.isDarkMode 
-                                    ? ThemeService.darkTextPrimary 
-                                    : ThemeService.lightTextPrimary,
-                              ),
-                            ),
-                            subtitle: Text(
-                              'Prioritized ${_formatPrioritizedDate(data['prioritizedAt'])}',
-                              style: TextStyle(
-                                color: _themeService.isDarkMode 
-                                    ? ThemeService.darkTextSecondary 
-                                    : ThemeService.lightTextSecondary,
-                              ),
-                            ),
-                            trailing: PopupMenuButton<String>(
-                              onSelected: (value) {
-                                if (value == 'unprioritize') {
-                                  _unprioritizeItem(ref, data);
-                                }
-                              },
-                              itemBuilder: (context) => [
-                                const PopupMenuItem(
-                                  value: 'unprioritize',
-                                  child: Row(
-                                    children: [
-                                      Icon(Icons.priority_high_outlined, color: Colors.orange),
-                                      SizedBox(width: 8),
-                                      Text('Remove Priority'),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-            ),
-          ],
-        ),
-      ),
-    );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error loading prioritized items: ${e.toString()}'),
-            backgroundColor: Theme.of(context).colorScheme.error,
-          ),
-        );
-      }
-    }
-  }
-
-  String _formatPrioritizedDate(dynamic timestamp) {
-    if (timestamp == null) return 'recently';
-    
-    try {
-      final date = timestamp.toDate();
-      final now = DateTime.now();
-      final difference = now.difference(date);
-      
-      if (difference.inDays > 0) {
-        return '${difference.inDays} day${difference.inDays == 1 ? '' : 's'} ago';
-      } else if (difference.inHours > 0) {
-        return '${difference.inHours} hour${difference.inHours == 1 ? '' : 's'} ago';
-      } else {
-        return 'just now';
-      }
-    } catch (e) {
-      return 'recently';
-    }
-  }
-
-  Future<void> _showFrozenItems() async {
-    try {
-      final frozenItems = await _db
-          .collection('users')
-          .doc(user.uid)
-          .collection('items')
-          .where('isFrozen', isEqualTo: true)
-          .get();
-
-      if (!mounted) return;
-
-      // Sort items by frozenAt manually
-      final sortedItems = frozenItems.docs.toList()
-        ..sort((a, b) {
-          final aTime = a.data()['frozenAt'] as Timestamp?;
-          final bTime = b.data()['frozenAt'] as Timestamp?;
-          
-          if (aTime == null && bTime == null) return 0;
-          if (aTime == null) return 1;
-          if (bTime == null) return -1;
-          
-          return bTime.compareTo(aTime); // Descending order
-        });
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: _themeService.isDarkMode 
-          ? ThemeService.darkCard 
-          : ThemeService.lightCard,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => DraggableScrollableSheet(
-        initialChildSize: 0.6,
-        minChildSize: 0.3,
-        maxChildSize: 0.9,
-        expand: false,
-        builder: (context, scrollController) => Column(
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              margin: const EdgeInsets.symmetric(vertical: 12),
-              decoration: BoxDecoration(
-                color: Colors.grey[300],
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.ac_unit_rounded,
-                    color: const Color(0xFF00BCD4),
-                    size: 24,
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Frozen Items',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: _themeService.isDarkMode 
-                          ? ThemeService.darkTextPrimary 
-                          : ThemeService.lightTextPrimary,
-                    ),
-                  ),
-                  const Spacer(),
-                  Text(
-                    '${sortedItems.length}',
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: _themeService.isDarkMode 
-                          ? ThemeService.darkTextSecondary 
-                          : ThemeService.lightTextSecondary,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(),
-            Expanded(
-              child: sortedItems.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.ac_unit_outlined,
-                            size: 64,
-                            color: Colors.grey[400],
-                          ),
-                          const SizedBox(height: 16),
-                          Text(
-                            'No frozen items',
-                            style: TextStyle(
-                              fontSize: 18,
-                              color: _themeService.isDarkMode 
-                                  ? ThemeService.darkTextSecondary 
-                                  : ThemeService.lightTextSecondary,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Freeze items to see them here',
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: _themeService.isDarkMode 
-                                  ? ThemeService.darkTextSecondary 
-                                  : ThemeService.lightTextSecondary,
-                            ),
-                          ),
-                        ],
-                      ),
-                    )
-                  : ListView.builder(
-                      controller: scrollController,
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      itemCount: sortedItems.length,
-                      itemBuilder: (context, index) {
-                        final doc = sortedItems[index];
-                        final data = doc.data();
-                        final ref = doc.reference;
-                        
-                        return Card(
-                          margin: const EdgeInsets.symmetric(vertical: 4),
-                          color: _themeService.isDarkMode 
-                              ? ThemeService.darkBackground 
-                              : ThemeService.lightBackground,
-                          child: ListTile(
-                            leading: Icon(
-                              _getGroceryIcon(GroceryType.fromString(data['groceryType'] ?? 'other')),
-                              color: _getGroceryColor(GroceryType.fromString(data['groceryType'] ?? 'other')),
-                            ),
-                            title: Text(
-                              data['name'] ?? 'Unknown',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w600,
-                                color: _themeService.isDarkMode 
-                                    ? ThemeService.darkTextPrimary 
-                                    : ThemeService.lightTextPrimary,
-                              ),
-                            ),
-                            subtitle: Text(
-                              'Frozen ${_formatPrioritizedDate(data['frozenAt'])}',
-                              style: TextStyle(
-                                color: _themeService.isDarkMode 
-                                    ? ThemeService.darkTextSecondary 
-                                    : ThemeService.lightTextSecondary,
-                              ),
-                            ),
-                            trailing: PopupMenuButton<String>(
-                              onSelected: (value) async {
-                                if (value == 'unfreeze') {
-                                  final itemName = data['name'] ?? 'Unknown';
-                                  final originalExpiry = data['originalExpiryDate'];
-                                  final now = DateTime.now();
-                                  final expiryDate = originalExpiry ?? Timestamp.fromDate(now.add(const Duration(days: 7)));
-                                  
-                                  await ref.update({
-                                    'isFrozen': false,
-                                    'expiryDate': expiryDate,
-                                    'frozenAt': FieldValue.delete(),
-                                    'originalExpiryDate': FieldValue.delete(),
-                                  });
-                                  
-                                  if (mounted) {
-                                    Navigator.of(context).pop(); // Close the modal
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text('Unfroze "$itemName"'),
-                                        backgroundColor: const Color(0xFFFF5722),
-                                      ),
-                                    );
-                                  }
-                                }
-                              },
-                              itemBuilder: (context) => [
-                                const PopupMenuItem(
-                                  value: 'unfreeze',
-                                  child: Row(
-                                    children: [
-                                      Icon(Icons.ac_unit, color: Color(0xFFFF5722)),
-                                      SizedBox(width: 8),
-                                      Text('Unfreeze'),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-            ),
-          ],
-        ),
-      ),
-    );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error loading frozen items: ${e.toString()}'),
-            backgroundColor: Theme.of(context).colorScheme.error,
-          ),
-        );
-      }
-    }
-  }
-
-
   double _getCarbonFootprint(String groceryType) {
     // Carbon footprint in kg CO2 per kg of food (approximate values)
     switch (groceryType) {
@@ -2942,9 +2537,9 @@ class _HomePageState extends State<HomePage> {
     // Convert kg to lbs if user preference is set to lbs (1 kg = 2.20462 lbs)
     if (_themeService.useLbs) {
       final carbonLbs = carbonKg * 2.20462;
-      return '${carbonLbs.toStringAsFixed(1)} lbs CO₂';
+      return '${carbonLbs.toStringAsFixed(1)} lbs CO2';
     } else {
-      return '${carbonKg.toStringAsFixed(1)} kg CO₂';
+      return '${carbonKg.toStringAsFixed(1)} kg CO2';
     }
   }
 
@@ -3071,235 +2666,6 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Future<void> _showFinishedItemsHistory() async {
-    try {
-      final finishedItems = await _db
-          .collection('users')
-          .doc(user.uid)
-          .collection('finished_items')
-          .orderBy('finishedAt', descending: true)
-          .get();
-
-      if (!mounted) return;
-
-      showModalBottomSheet(
-        context: context,
-        isScrollControlled: true,
-        backgroundColor: _themeService.isDarkMode 
-            ? ThemeService.darkCard 
-            : ThemeService.lightCard,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        builder: (context) => DraggableScrollableSheet(
-          initialChildSize: 0.7,
-          minChildSize: 0.5,
-          maxChildSize: 0.95,
-          expand: false,
-          builder: (context, scrollController) => Column(
-            children: [
-              Container(
-                width: 40,
-                height: 4,
-                margin: const EdgeInsets.symmetric(vertical: 12),
-                decoration: BoxDecoration(
-                  color: Colors.grey[300],
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF27AE60).withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: const Icon(
-                        Icons.check_circle_rounded,
-                        color: Color(0xFF27AE60),
-                        size: 24,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        'Finished Items',
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: _themeService.isDarkMode 
-                              ? ThemeService.darkTextPrimary 
-                              : ThemeService.lightTextPrimary,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      '${finishedItems.docs.length}',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkTextSecondary 
-                            : ThemeService.lightTextSecondary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 8),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Text(
-                  'Your consumption history & environmental impact',
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: _themeService.isDarkMode 
-                        ? ThemeService.darkTextSecondary 
-                        : ThemeService.lightTextSecondary,
-                  ),
-                ),
-              ),
-              const Divider(height: 24),
-              Expanded(
-                child: finishedItems.docs.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.check_circle_outline,
-                              size: 64,
-                              color: Colors.grey[400],
-                            ),
-                            const SizedBox(height: 16),
-                            Text(
-                              'No finished items yet',
-                              style: TextStyle(
-                                fontSize: 18,
-                                color: _themeService.isDarkMode 
-                                    ? ThemeService.darkTextSecondary 
-                                    : ThemeService.lightTextSecondary,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              'Items you finish will appear here',
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: _themeService.isDarkMode 
-                                    ? ThemeService.darkTextSecondary 
-                                    : ThemeService.lightTextSecondary,
-                              ),
-                            ),
-                          ],
-                        ),
-                      )
-                    : ListView.builder(
-                        controller: scrollController,
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        itemCount: finishedItems.docs.length,
-                        itemBuilder: (context, index) {
-                          final doc = finishedItems.docs[index];
-                          final data = doc.data();
-                          final groceryType = GroceryType.fromString(data['groceryType'] ?? 'other');
-                          final finishedAt = data['finishedAt'] as Timestamp?;
-                          
-                          return Card(
-                            margin: const EdgeInsets.symmetric(vertical: 4),
-                            color: _themeService.isDarkMode 
-                                ? ThemeService.darkBackground 
-                                : ThemeService.lightBackground,
-                            child: ListTile(
-                              leading: Container(
-                                width: 40,
-                                height: 40,
-                                decoration: BoxDecoration(
-                                  color: _getGroceryColor(groceryType).withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Icon(
-                                  _getGroceryIcon(groceryType),
-                                  color: _getGroceryColor(groceryType),
-                                  size: 20,
-                                ),
-                              ),
-                              title: Text(
-                                data['name'] ?? 'Unknown',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  color: _themeService.isDarkMode 
-                                      ? ThemeService.darkTextPrimary 
-                                      : ThemeService.lightTextPrimary,
-                                ),
-                              ),
-                              subtitle: Text(
-                                'Qty: ${data['quantity'] ?? 1} • Finished ${_formatFinishedDate(finishedAt)}',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: _themeService.isDarkMode 
-                                      ? ThemeService.darkTextSecondary 
-                                      : ThemeService.lightTextSecondary,
-                                ),
-                              ),
-                              trailing: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF27AE60).withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: const Icon(
-                                  Icons.check_rounded,
-                                  color: Color(0xFF27AE60),
-                                  size: 16,
-                                ),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-              ),
-            ],
-          ),
-        ),
-      );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error loading finished items: ${e.toString()}'),
-            backgroundColor: Theme.of(context).colorScheme.error,
-          ),
-        );
-      }
-    }
-  }
-
-  String _formatFinishedDate(dynamic timestamp) {
-    if (timestamp == null) return 'recently';
-    
-    try {
-      final date = (timestamp as Timestamp).toDate();
-      final now = DateTime.now();
-      final difference = now.difference(date);
-      
-      if (difference.inDays > 0) {
-        return '${difference.inDays} day${difference.inDays == 1 ? '' : 's'} ago';
-      } else if (difference.inHours > 0) {
-        return '${difference.inHours} hour${difference.inHours == 1 ? '' : 's'} ago';
-      } else if (difference.inMinutes > 0) {
-        return '${difference.inMinutes} minute${difference.inMinutes == 1 ? '' : 's'} ago';
-      } else {
-        return 'just now';
-      }
-    } catch (e) {
-      return 'recently';
-    }
-  }
-
-  // Recipes moved to drawer menu - navigate to RecipesHubScreen via drawer item
 }
 
 class _EmptyState extends StatefulWidget {
@@ -3366,9 +2732,9 @@ class _EmptyStateState extends State<_EmptyState> {
     // Convert kg to lbs if user preference is set to lbs (1 kg = 2.20462 lbs)
     if (_themeService.useLbs) {
       final carbonLbs = carbonKg * 2.20462;
-      return '${carbonLbs.toStringAsFixed(1)} lbs CO₂';
+      return '${carbonLbs.toStringAsFixed(1)} lbs CO2';
     } else {
-      return '${carbonKg.toStringAsFixed(1)} kg CO₂';
+      return '${carbonKg.toStringAsFixed(1)} kg CO2';
     }
   }
 
@@ -3494,154 +2860,3 @@ class _FilterOption {
   });
 }
 
-class _CarbonEmissionsWidget extends StatefulWidget {
-  const _CarbonEmissionsWidget({required this.isDarkMode});
-  
-  final bool isDarkMode;
-
-  @override
-  State<_CarbonEmissionsWidget> createState() => _CarbonEmissionsWidgetState();
-}
-
-class _CarbonEmissionsWidgetState extends State<_CarbonEmissionsWidget> {
-  late final ThemeService _themeService;
-
-  @override
-  void initState() {
-    super.initState();
-    _themeService = ThemeService();
-  }
-
-  double _calculateCarbonSavings(List<QueryDocumentSnapshot<Map<String, dynamic>>> docs) {
-    double totalCarbon = 0.0;
-
-    for (var doc in docs) {
-      final data = doc.data();
-      final quantity = (data['quantity'] ?? 1) as num;
-      final groceryType = data['groceryType'] ?? 'other';
-      
-      double carbonPerKg = _getCarbonFootprint(groceryType);
-      totalCarbon += quantity * carbonPerKg * 0.5; // Assume average 0.5kg per item
-    }
-
-    return totalCarbon;
-  }
-
-  double _getCarbonFootprint(String groceryType) {
-    switch (groceryType) {
-      case 'meat':
-        return 27.0;
-      case 'poultry':
-        return 6.9;
-      case 'seafood':
-        return 13.6;
-      case 'dairy':
-        return 3.2;
-      case 'vegetable':
-        return 2.0;
-      case 'fruit':
-        return 1.0;
-      case 'grain':
-        return 1.4;
-      case 'frozen':
-        return 3.0;
-      default:
-        return 2.5;
-    }
-  }
-
-  String _formatCarbonValue(double carbonKg) {
-    // Convert kg to lbs if user preference is set to lbs (1 kg = 2.20462 lbs)
-    if (_themeService.useLbs) {
-      final carbonLbs = carbonKg * 2.20462;
-      return '${carbonLbs.toStringAsFixed(1)} lbs CO₂';
-    } else {
-      return '${carbonKg.toStringAsFixed(1)} kg CO₂';
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
-      return const SizedBox.shrink();
-    }
-
-    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .collection('finished_items')
-          .snapshots(),
-      builder: (context, snapshot) {
-        double carbonSaved = 0.0;
-        bool isLoading = true;
-        
-        if (snapshot.hasData) {
-          carbonSaved = _calculateCarbonSavings(snapshot.data!.docs);
-          isLoading = false;
-        } else if (snapshot.hasError) {
-          isLoading = false;
-        } else if (snapshot.connectionState == ConnectionState.done) {
-          isLoading = false;
-        }
-        
-        return Container(
-          width: 100,
-          constraints: const BoxConstraints(
-            minHeight: 50,
-            maxHeight: 60,
-          ),
-          decoration: BoxDecoration(
-            color: const Color(0xFF27AE60).withOpacity(0.2),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: const Color(0xFF27AE60).withOpacity(0.3),
-              width: 1,
-            ),
-          ),
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              borderRadius: BorderRadius.circular(8),
-              onTap: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('You\'ve saved ${_formatCarbonValue(carbonSaved)} by using your food!'),
-                    backgroundColor: const Color(0xFF27AE60),
-                  ),
-                );
-              },
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 6),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(
-                      Icons.eco_rounded,
-                      color: Colors.white,
-                      size: 14,
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      isLoading ? '...' : _formatCarbonValue(carbonSaved),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                      ),
-                      textAlign: TextAlign.center,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-}

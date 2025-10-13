@@ -103,9 +103,25 @@ class ItemTile extends StatelessWidget {
     }
   }
 
-  bool _shouldShowPrioritize() {
-    // Always show prioritize button for all items
-    return true;
+  Color _getUsageColor(double percentage) {
+    // Smooth gradient: Green (100%) -> Yellow (50%) -> Red (0%)
+    if (percentage > 50) {
+      // Interpolate between yellow and green
+      final t = ((percentage - 50) / 50).clamp(0.0, 1.0);
+      return Color.lerp(
+        const Color(0xFFF39C12), // Yellow
+        const Color(0xFF27AE60), // Green
+        t,
+      )!;
+    } else {
+      // Interpolate between red and yellow
+      final t = (percentage / 50).clamp(0.0, 1.0);
+      return Color.lerp(
+        const Color(0xFFE74C3C), // Red
+        const Color(0xFFF39C12), // Yellow
+        t,
+      )!;
+    }
   }
 
   @override
@@ -238,7 +254,7 @@ class ItemTile extends StatelessWidget {
                                     'Qty',
                                     style: TextStyle(
                                       fontSize: 10,
-                                      color: isDarkMode ? const Color(0xFF7BB3F0) : const Color(0xFF3498DB),
+                                      color: _getUsageColor(usagePercentage),
                                     ),
                                   ),
                                   const SizedBox(height: 2),
@@ -246,9 +262,9 @@ class ItemTile extends StatelessWidget {
                                     borderRadius: BorderRadius.circular(2),
                                     child: LinearProgressIndicator(
                                       value: (usagePercentage / 100).clamp(0.0, 1.0),
-                                      backgroundColor: (isDarkMode ? const Color(0xFF7BB3F0) : const Color(0xFF3498DB)).withOpacity(0.2),
+                                      backgroundColor: _getUsageColor(usagePercentage).withOpacity(0.2),
                                       valueColor: AlwaysStoppedAnimation<Color>(
-                                        isDarkMode ? const Color(0xFF7BB3F0) : const Color(0xFF3498DB),
+                                        _getUsageColor(usagePercentage),
                                       ),
                                       minHeight: 3,
                                     ),
@@ -342,7 +358,7 @@ class ItemTile extends StatelessWidget {
                             ],
                           ),
                         ),
-                        if (onPrioritize != null && _shouldShowPrioritize() && !isPrioritized)
+                        if (onPrioritize != null && !isPrioritized)
                           PopupMenuItem(
                             value: 'prioritize',
                             child: Row(
@@ -455,13 +471,30 @@ class ItemTile extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    Expanded(
+                    Flexible(
                       child: Text(
                         name,
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
                           color: isDarkMode ? const Color(0xFFE8E8E8) : const Color(0xFF2C3E50),
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: groceryColor.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        groceryType.displayName,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                          color: groceryColor,
                         ),
                       ),
                     ),
@@ -503,61 +536,36 @@ class ItemTile extends StatelessWidget {
                       ),
                   ],
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 8),
                 Row(
                   children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: groceryColor.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        groceryType.displayName,
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w500,
-                          color: groceryColor,
-                        ),
+                    Icon(
+                      Icons.inventory_2_rounded,
+                      size: 12,
+                      color: _getUsageColor(usagePercentage),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Qty',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                        color: _getUsageColor(usagePercentage),
                       ),
                     ),
                     const SizedBox(width: 8),
                     SizedBox(
-                      width: 80,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.inventory_2_rounded,
-                                size: 12,
-                                color: isDarkMode ? const Color(0xFF7BB3F0) : const Color(0xFF3498DB),
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                'Qty',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w500,
-                                  color: isDarkMode ? const Color(0xFF7BB3F0) : const Color(0xFF3498DB),
-                                ),
-                              ),
-                            ],
+                      width: 100,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: LinearProgressIndicator(
+                          value: (usagePercentage / 100).clamp(0.0, 1.0),
+                          backgroundColor: _getUsageColor(usagePercentage).withOpacity(0.2),
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            _getUsageColor(usagePercentage),
                           ),
-                          const SizedBox(height: 4),
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(4),
-                            child: LinearProgressIndicator(
-                              value: (usagePercentage / 100).clamp(0.0, 1.0),
-                              backgroundColor: (isDarkMode ? const Color(0xFF7BB3F0) : const Color(0xFF3498DB)).withOpacity(0.2),
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                isDarkMode ? const Color(0xFF7BB3F0) : const Color(0xFF3498DB),
-                              ),
-                              minHeight: 4,
-                            ),
-                          ),
-                        ],
+                          minHeight: 4,
+                        ),
                       ),
                     ),
                   ],
@@ -663,7 +671,7 @@ class ItemTile extends StatelessWidget {
                     ],
                   ),
                 ),
-                if (onPrioritize != null && _shouldShowPrioritize() && !isPrioritized)
+                if (onPrioritize != null && !isPrioritized)
                   PopupMenuItem(
                     value: 'prioritize',
                     child: Row(
@@ -745,3 +753,4 @@ class ItemTile extends StatelessWidget {
     );
   }
 }
+
