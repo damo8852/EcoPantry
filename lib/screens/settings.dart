@@ -59,10 +59,23 @@ class _SettingsPageState extends State<SettingsPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 24,
+                vertical: 12,
+              ),
+            ),
             child: const Text('Cancel'),
           ),
-          TextButton(
+          FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.red,
+              padding: const EdgeInsets.symmetric(
+                horizontal: 24,
+                vertical: 12,
+              ),
+            ),
             child: const Text('Logout'),
           ),
         ],
@@ -123,6 +136,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     title: Text(
                       'Dark Mode',
                       style: TextStyle(
+                        fontSize: 15,
                         color: _themeService.isDarkMode 
                             ? ThemeService.darkTextPrimary 
                             : ThemeService.lightTextPrimary,
@@ -131,6 +145,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     subtitle: Text(
                       'Switch between light and dark themes',
                       style: TextStyle(
+                        fontSize: 12,
                         color: _themeService.isDarkMode 
                             ? ThemeService.darkTextSecondary 
                             : ThemeService.lightTextSecondary,
@@ -139,6 +154,8 @@ class _SettingsPageState extends State<SettingsPage> {
                     value: _isDarkMode,
                     onChanged: _toggleDarkMode,
                     activeColor: ThemeService.primaryColor,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    dense: true,
                   ),
                   
                   const Divider(),
@@ -148,6 +165,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     title: Text(
                       'Compact View',
                       style: TextStyle(
+                        fontSize: 15,
                         color: _themeService.isDarkMode 
                             ? ThemeService.darkTextPrimary 
                             : ThemeService.lightTextPrimary,
@@ -156,6 +174,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     subtitle: Text(
                       'Use compact layout for item tiles',
                       style: TextStyle(
+                        fontSize: 12,
                         color: _themeService.isDarkMode 
                             ? ThemeService.darkTextSecondary 
                             : ThemeService.lightTextSecondary,
@@ -164,6 +183,8 @@ class _SettingsPageState extends State<SettingsPage> {
                     value: _isCompactView,
                     onChanged: _toggleCompactView,
                     activeColor: ThemeService.primaryColor,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    dense: true,
                   ),
                 ],
               ),
@@ -199,6 +220,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     title: Text(
                       'Use Pounds (lbs)',
                       style: TextStyle(
+                        fontSize: 15,
                         color: _themeService.isDarkMode 
                             ? ThemeService.darkTextPrimary 
                             : ThemeService.lightTextPrimary,
@@ -209,6 +231,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           ? 'Carbon savings shown in lbs CO₂' 
                           : 'Carbon savings shown in kg CO₂',
                       style: TextStyle(
+                        fontSize: 12,
                         color: _themeService.isDarkMode 
                             ? ThemeService.darkTextSecondary 
                             : ThemeService.lightTextSecondary,
@@ -217,6 +240,8 @@ class _SettingsPageState extends State<SettingsPage> {
                     value: _useLbs,
                     onChanged: _toggleCarbonUnit,
                     activeColor: ThemeService.primaryColor,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    dense: true,
                   ),
                 ],
               ),
@@ -247,25 +272,36 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                   const SizedBox(height: 16),
                   
-                  ListTile(
-                    leading: const Icon(Icons.logout, color: Colors.red),
-                    title: Text(
-                      'Logout',
-                      style: TextStyle(
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkTextPrimary 
-                            : ThemeService.lightTextPrimary,
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.tonalIcon(
+                      onPressed: _logout,
+                      icon: const Icon(Icons.logout),
+                      label: const Text('Logout'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.red.shade400,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 16,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                       ),
                     ),
-                    subtitle: Text(
+                  ),
+                  const SizedBox(height: 8),
+                  Center(
+                    child: Text(
                       'Sign out of your account',
                       style: TextStyle(
+                        fontSize: 12,
                         color: _themeService.isDarkMode 
                             ? ThemeService.darkTextSecondary 
                             : ThemeService.lightTextSecondary,
                       ),
                     ),
-                    onTap: _logout,
                   ),
                 ],
               ),
@@ -296,85 +332,110 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                   const SizedBox(height: 16),
                   
-                  ListTile(
-                    leading: Icon(
-                      Icons.info_outline,
+                  // App Version (not a button, just display)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
                       color: _themeService.isDarkMode 
-                          ? ThemeService.darkTextPrimary 
-                          : ThemeService.lightTextPrimary,
+                          ? Colors.grey.shade800 
+                          : Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                    title: Text(
-                      'App Version',
-                      style: TextStyle(
-                        color: _themeService.isDarkMode 
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.info_outline,
+                          color: ThemeService.primaryColor,
+                        ),
+                        const SizedBox(width: 16),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'App Version',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: _themeService.isDarkMode 
+                                    ? ThemeService.darkTextPrimary 
+                                    : ThemeService.lightTextPrimary,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '1.0.0',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: _themeService.isDarkMode 
+                                    ? ThemeService.darkTextSecondary 
+                                    : ThemeService.lightTextSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  
+                  const SizedBox(height: 12),
+                  
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        // TODO: Implement privacy policy
+                      },
+                      icon: const Icon(Icons.description_outlined),
+                      label: const Text('Privacy Policy'),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 16,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        side: BorderSide(
+                          color: _themeService.isDarkMode 
+                              ? ThemeService.darkTextSecondary 
+                              : ThemeService.lightTextSecondary,
+                        ),
+                        foregroundColor: _themeService.isDarkMode 
                             ? ThemeService.darkTextPrimary 
                             : ThemeService.lightTextPrimary,
-                      ),
-                    ),
-                    subtitle: Text(
-                      '1.0.0',
-                      style: TextStyle(
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkTextSecondary 
-                            : ThemeService.lightTextSecondary,
                       ),
                     ),
                   ),
                   
-                  ListTile(
-                    leading: Icon(
-                      Icons.description_outlined,
-                      color: _themeService.isDarkMode 
-                          ? ThemeService.darkTextPrimary 
-                          : ThemeService.lightTextPrimary,
-                    ),
-                    title: Text(
-                      'Privacy Policy',
-                      style: TextStyle(
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkTextPrimary 
-                            : ThemeService.lightTextPrimary,
-                      ),
-                    ),
-                    subtitle: Text(
-                      'View our privacy policy',
-                      style: TextStyle(
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkTextSecondary 
-                            : ThemeService.lightTextSecondary,
-                      ),
-                    ),
-                    onTap: () {
-                      // TODO: Implement privacy policy
-                    },
-                  ),
+                  const SizedBox(height: 12),
                   
-                  ListTile(
-                    leading: Icon(
-                      Icons.help_outline,
-                      color: _themeService.isDarkMode 
-                          ? ThemeService.darkTextPrimary 
-                          : ThemeService.lightTextPrimary,
-                    ),
-                    title: Text(
-                      'Help & Support',
-                      style: TextStyle(
-                        color: _themeService.isDarkMode 
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        // TODO: Implement help
+                      },
+                      icon: const Icon(Icons.help_outline),
+                      label: const Text('Help & Support'),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 16,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        side: BorderSide(
+                          color: _themeService.isDarkMode 
+                              ? ThemeService.darkTextSecondary 
+                              : ThemeService.lightTextSecondary,
+                        ),
+                        foregroundColor: _themeService.isDarkMode 
                             ? ThemeService.darkTextPrimary 
                             : ThemeService.lightTextPrimary,
                       ),
                     ),
-                    subtitle: Text(
-                      'Get help and support',
-                      style: TextStyle(
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkTextSecondary 
-                            : ThemeService.lightTextSecondary,
-                      ),
-                    ),
-                    onTap: () {
-                      // TODO: Implement help
-                    },
                   ),
                 ],
               ),

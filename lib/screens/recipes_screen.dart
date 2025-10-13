@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/recipe.dart';
 import '../services/theme_service.dart';
 
@@ -17,8 +19,12 @@ class RecipesScreen extends StatefulWidget {
 }
 
 class _RecipesScreenState extends State<RecipesScreen> {
+  final _auth = FirebaseAuth.instance;
+  final _db = FirebaseFirestore.instance;
   bool _showIngredientsDetails = false;
   late final ThemeService _themeService;
+
+  User get user => _auth.currentUser!;
 
   @override
   void initState() {
@@ -37,6 +43,65 @@ class _RecipesScreenState extends State<RecipesScreen> {
   void dispose() {
     _themeService.removeListener(_onThemeChanged);
     super.dispose();
+  }
+
+  Future<void> _saveRecipe(Recipe recipe) async {
+    try {
+      // Check if recipe is already saved
+      final existingQuery = await _db
+          .collection('users')
+          .doc(user.uid)
+          .collection('saved_recipes')
+          .where('name', isEqualTo: recipe.name)
+          .limit(1)
+          .get();
+
+      if (existingQuery.docs.isNotEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Recipe already saved!'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+        return;
+      }
+
+      // Save recipe to Firestore
+      final recipeData = recipe.toMap();
+      recipeData['savedAt'] = FieldValue.serverTimestamp();
+
+      await _db
+          .collection('users')
+          .doc(user.uid)
+          .collection('saved_recipes')
+          .add(recipeData);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Saved "${recipe.name}"'),
+            action: SnackBarAction(
+              label: 'View',
+              onPressed: () {
+                // Navigate to saved recipes screen
+                Navigator.pushNamed(context, '/saved_recipes');
+              },
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to save recipe: ${e.toString()}'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -158,197 +223,348 @@ class _RecipesScreenState extends State<RecipesScreen> {
 
   Widget _buildRecipeCard(BuildContext context, Recipe recipe) {
     return Card(
-      margin: const EdgeInsets.only(bottom: 16),
-      elevation: 2,
-      color: _themeService.isDarkMode ? ThemeService.darkCardBackground : null,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: InkWell(
-        onTap: () => _showRecipeDetails(context, recipe),
-        borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.only(bottom: 20),
+      elevation: 0,
+      color: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: _themeService.isDarkMode 
+                ? [ThemeService.darkCardBackground, ThemeService.darkCardBackground.withOpacity(0.8)]
+                : [Colors.white, const Color(0xFFFFF8F3)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: const Color(0xFFE67E22).withOpacity(0.2),
+            width: 1.5,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFFE67E22).withOpacity(0.1),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: InkWell(
+          onTap: () => _showRecipeDetails(context, recipe),
+          borderRadius: BorderRadius.circular(20),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      recipe.name,
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.bold,
-                            color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : null,
-                          ),
+              // Header with subtle background
+              Container(
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  color: _themeService.isDarkMode 
+                      ? Colors.white.withOpacity(0.05)
+                      : const Color(0xFFE67E22).withOpacity(0.08),
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE67E22).withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(
+                        Icons.restaurant_menu,
+                        color: _themeService.isDarkMode ? const Color(0xFFE67E22) : const Color(0xFFD35400),
+                        size: 22,
+                      ),
                     ),
-                  ),
-                  Icon(
-                    Icons.restaurant,
-                    color: Theme.of(context).colorScheme.primary,
-                    size: 24,
-                  ),
-                ],
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        recipe.name,
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : const Color(0xFF2C3E50),
+                        ),
+                      ),
+                    ),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE67E22).withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: IconButton(
+                        icon: const Icon(Icons.bookmark_border_rounded),
+                        color: _themeService.isDarkMode ? const Color(0xFFE67E22) : const Color(0xFFD35400),
+                        onPressed: () => _saveRecipe(recipe),
+                        tooltip: 'Save Recipe',
+                        iconSize: 20,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 16,
-                runSpacing: 4,
-                children: [
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.access_time,
-                        size: 16,
-                        color: Theme.of(context).colorScheme.secondary,
-                      ),
-                      const SizedBox(width: 4),
-                        Text(
-                          '${recipe.prepTime} prep',
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : Theme.of(context).colorScheme.secondary,
-                              ),
-                      ),
-                      if (recipe.cookTime != 'Unknown') ...[
-                        const SizedBox(width: 8),
-                        Text(
-                          '• ${recipe.cookTime} cook',
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : Theme.of(context).colorScheme.secondary,
-                              ),
-                        ),
-                      ],
-                    ],
-                  ),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                        Icon(
-                          Icons.kitchen,
-                          size: 16,
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
-                      const SizedBox(width: 4),
-                      Text(
-                        '${recipe.ingredients.length} from fridge',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : Theme.of(context).colorScheme.primary,
-                            ),
-                      ),
-                    ],
-                  ),
-                  if (recipe.shoppingList.isNotEmpty)
+              
+              Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Stats row with modern badges
                     Row(
-                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(
-                          Icons.shopping_cart,
-                          size: 16,
-                          color: Theme.of(context).colorScheme.tertiary,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          '+${recipe.shoppingList.length} to buy',
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : Theme.of(context).colorScheme.tertiary,
-                              ),
-                        ),
-                      ],
-                    ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              // Available ingredients section
-              Text(
-                'Available in your fridge:',
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : Theme.of(context).colorScheme.primary,
-                    ),
-              ),
-              const SizedBox(height: 4),
-              ...recipe.ingredients.take(3).map((ingredient) => Padding(
-                    padding: const EdgeInsets.only(left: 8, top: 2),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.check_circle_outline,
-                          size: 16,
-                          color: Theme.of(context).colorScheme.primary,
+                        Expanded(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFE67E22).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.access_time,
+                                  size: 18,
+                                  color: Color(0xFFE67E22),
+                                ),
+                                const SizedBox(width: 6),
+                                Flexible(
+                                  child: Text(
+                                    recipe.cookTime != 'Unknown' 
+                                        ? '${recipe.prepTime} + ${recipe.cookTime}'
+                                        : recipe.prepTime,
+                                    style: TextStyle(
+                                      color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : const Color(0xFFE67E22),
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
                         const SizedBox(width: 8),
                         Expanded(
-                          child: Text(
-                            ingredient,
-                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                  color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : Theme.of(context).colorScheme.onSurface,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: Colors.green.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.kitchen,
+                                  size: 18,
+                                  color: Colors.green,
                                 ),
+                                const SizedBox(width: 6),
+                                Flexible(
+                                  child: Text(
+                                    '${recipe.ingredients.length} items',
+                                    style: TextStyle(
+                                      color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : Colors.green,
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        if (recipe.shoppingList.isNotEmpty) ...[
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: Colors.blue.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(
+                                    Icons.shopping_cart,
+                                    size: 18,
+                                    color: Colors.blue,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Flexible(
+                                    child: Text(
+                                      '+${recipe.shoppingList.length}',
+                                      style: TextStyle(
+                                        color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : Colors.blue,
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    // Available ingredients section with modern styling
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: Colors.green.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Icon(
+                            Icons.check_circle,
+                            size: 18,
+                            color: Colors.green,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'From Your Fridge',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                            color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : Colors.green,
                           ),
                         ),
                       ],
                     ),
-                  )),
-              if (recipe.ingredients.length > 3)
-                Padding(
-                  padding: const EdgeInsets.only(left: 8, top: 4),
-                  child: Text(
-                    '+ ${recipe.ingredients.length - 3} more from fridge',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : Theme.of(context).colorScheme.primary,
-                          fontStyle: FontStyle.italic,
+                    const SizedBox(height: 12),
+                    ...recipe.ingredients.take(3).map((ingredient) => Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 6,
+                                height: 6,
+                                decoration: const BoxDecoration(
+                                  color: Colors.green,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  ingredient,
+                                  style: TextStyle(
+                                    color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : Colors.black87,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        )),
+                    if (recipe.ingredients.length > 3)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          '+ ${recipe.ingredients.length - 3} more ingredients',
+                          style: TextStyle(
+                            color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : Colors.green,
+                            fontStyle: FontStyle.italic,
+                            fontSize: 13,
+                          ),
                         ),
-                  ),
-                ),
-              // Shopping list section
-              if (recipe.shoppingList.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Text(
-                  'Need to buy:',
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : Theme.of(context).colorScheme.tertiary,
                       ),
-                ),
-                const SizedBox(height: 4),
-                ...recipe.shoppingList.take(2).map((item) => Padding(
-                      padding: const EdgeInsets.only(left: 8, top: 2),
-                      child: Row(
+                    
+                    // Shopping list section
+                    if (recipe.shoppingList.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      Row(
                         children: [
-                          Icon(
-                            Icons.shopping_cart_outlined,
-                            size: 16,
-                            color: Theme.of(context).colorScheme.tertiary,
+                          Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: Colors.blue.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(
+                              Icons.shopping_cart,
+                              size: 18,
+                              color: Colors.blue,
+                            ),
                           ),
                           const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              item,
-                              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                    color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : Theme.of(context).colorScheme.tertiary,
-                                  ),
+                          Text(
+                            'Need to Buy',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 15,
+                              color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : Colors.blue,
                             ),
                           ),
                         ],
                       ),
-                    )),
-                if (recipe.shoppingList.length > 2)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 8, top: 4),
-                    child: Text(
-                      '+ ${recipe.shoppingList.length - 2} more to buy',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : Theme.of(context).colorScheme.tertiary,
-                            fontStyle: FontStyle.italic,
+                      const SizedBox(height: 12),
+                      ...recipe.shoppingList.take(2).map((item) => Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 6,
+                                  height: 6,
+                                  decoration: const BoxDecoration(
+                                    color: Colors.blue,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    item,
+                                    style: TextStyle(
+                                      color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : Colors.black87,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )),
+                      if (recipe.shoppingList.length > 2)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            '+ ${recipe.shoppingList.length - 2} more items',
+                            style: TextStyle(
+                              color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : Colors.blue,
+                              fontStyle: FontStyle.italic,
+                              fontSize: 13,
+                            ),
                           ),
+                        ),
+                    ],
+                    
+                    const SizedBox(height: 16),
+                    // Modern CTA button
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: () => _showRecipeDetails(context, recipe),
+                        icon: const Icon(Icons.menu_book_rounded, size: 20),
+                        label: const Text('View Full Recipe'),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: const Color(0xFFE67E22),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
-              ],
-              const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton.icon(
-                  onPressed: () => _showRecipeDetails(context, recipe),
-                  icon: const Icon(Icons.arrow_forward, size: 16),
-                  label: const Text('View Full Recipe'),
+                  ],
                 ),
               ),
             ],

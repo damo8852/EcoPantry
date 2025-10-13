@@ -19,14 +19,17 @@ class ItemTile extends StatelessWidget {
     this.isSelectionMode = false,
     this.isSelected = false,
     this.isPrioritized = false,
+    this.isFrozen = false,
     this.isCompactView = false,
     this.onSelectionChanged,
+    this.usagePercentage = 100.0,
   });
 
   final String name;
   final DateTime? expiry;
   final num quantity;
   final GroceryType groceryType;
+  final double usagePercentage;
   final VoidCallback onEdit;
   final Future<void> Function() onUsedHalf;
   final Future<void> Function() onFinish;
@@ -38,6 +41,7 @@ class ItemTile extends StatelessWidget {
   final bool isSelectionMode;
   final bool isSelected;
   final bool isPrioritized;
+  final bool isFrozen;
   final bool isCompactView;
   final ValueChanged<bool>? onSelectionChanged;
 
@@ -185,6 +189,25 @@ class ItemTile extends StatelessWidget {
                                   ),
                                 ),
                               ),
+                            if (isFrozen)
+                              Container(
+                                margin: const EdgeInsets.only(left: 6),
+                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF00BCD4),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.ac_unit_rounded,
+                                      color: Colors.white,
+                                      size: 8,
+                                    ),
+                                  ],
+                                ),
+                              ),
                           ],
                         ),
                         const SizedBox(height: 2),
@@ -206,11 +229,31 @@ class ItemTile extends StatelessWidget {
                               ),
                             ),
                             const SizedBox(width: 6),
-                            Text(
-                              'Qty: $quantity',
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: isDarkMode ? const Color(0xFF7BB3F0) : const Color(0xFF3498DB),
+                            SizedBox(
+                              width: 50,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Qty',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      color: isDarkMode ? const Color(0xFF7BB3F0) : const Color(0xFF3498DB),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(2),
+                                    child: LinearProgressIndicator(
+                                      value: (usagePercentage / 100).clamp(0.0, 1.0),
+                                      backgroundColor: (isDarkMode ? const Color(0xFF7BB3F0) : const Color(0xFF3498DB)).withOpacity(0.2),
+                                      valueColor: AlwaysStoppedAnimation<Color>(
+                                        isDarkMode ? const Color(0xFF7BB3F0) : const Color(0xFF3498DB),
+                                      ),
+                                      minHeight: 3,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                             const SizedBox(width: 8),
@@ -235,16 +278,16 @@ class ItemTile extends StatelessWidget {
                     ),
                   ),
                   // Smaller action menu
-                  Container(
-                    decoration: BoxDecoration(
-                      color: isDarkMode ? const Color(0xFF3C3C3C) : const Color(0xFFF8F9FA),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
+                  SizedBox(
+                    width: 24,
+                    height: 24,
                     child: PopupMenuButton<String>(
-                      icon: const Icon(
+                      padding: EdgeInsets.zero,
+                      iconSize: 14,
+                      icon: Icon(
                         Icons.more_vert_rounded,
-                        color: Color(0xFF7F8C8D),
-                        size: 16,
+                        color: const Color(0xFF7F8C8D),
+                        size: 14,
                       ),
                       onSelected: (v) {
                         if (v == 'edit') onEdit();
@@ -439,6 +482,25 @@ class ItemTile extends StatelessWidget {
                           ),
                         ),
                       ),
+                    if (isFrozen)
+                      Container(
+                        margin: const EdgeInsets.only(left: 8),
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF00BCD4),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.ac_unit_rounded,
+                              color: Colors.white,
+                              size: 12,
+                            ),
+                          ],
+                        ),
+                      ),
                   ],
                 ),
                 const SizedBox(height: 4),
@@ -460,31 +522,39 @@ class ItemTile extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.transparent,
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(
-                          color: isDarkMode ? const Color(0xFF7BB3F0) : const Color(0xFF3498DB),
-                          width: 1,
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
+                    SizedBox(
+                      width: 80,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(
-                            Icons.inventory_2_rounded,
-                            size: 12,
-                            color: isDarkMode ? const Color(0xFF7BB3F0) : const Color(0xFF3498DB),
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.inventory_2_rounded,
+                                size: 12,
+                                color: isDarkMode ? const Color(0xFF7BB3F0) : const Color(0xFF3498DB),
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                'Qty',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w500,
+                                  color: isDarkMode ? const Color(0xFF7BB3F0) : const Color(0xFF3498DB),
+                                ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: 4),
-                          Text(
-                            'Qty: $quantity',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w500,
-                              color: isDarkMode ? const Color(0xFF7BB3F0) : const Color(0xFF3498DB),
+                          const SizedBox(height: 4),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(4),
+                            child: LinearProgressIndicator(
+                              value: (usagePercentage / 100).clamp(0.0, 1.0),
+                              backgroundColor: (isDarkMode ? const Color(0xFF7BB3F0) : const Color(0xFF3498DB)).withOpacity(0.2),
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                isDarkMode ? const Color(0xFF7BB3F0) : const Color(0xFF3498DB),
+                              ),
+                              minHeight: 4,
                             ),
                           ),
                         ],

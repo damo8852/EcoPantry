@@ -3,6 +3,10 @@ service cloud.firestore {
   match /databases/{db}/documents {
     function isAuthed() { return request.auth != null; }
     function isOwner(uid) { return request.auth.uid == uid; }
+    function isNotGuest() { 
+      return request.auth != null && 
+             request.auth.token.firebase.sign_in_provider != 'anonymous';
+    }
 
     // Allow authenticated users to read config documents
     match /config/{document} {
@@ -19,6 +23,34 @@ service cloud.firestore {
 
       match /finished_items/{itemId} {
         allow read, write: if isAuthed() && isOwner(uid);
+      }
+
+      match /saved_recipes/{recipeId} {
+        allow read, write: if isAuthed() && isOwner(uid);
+      }
+    }
+
+    // Community recipes - read for all authenticated, create/update for non-guest users
+    match /community_recipes/{recipeId} {
+      allow read: if isAuthed();
+      allow create: if isNotGuest();
+      allow update: if isAuthed(); // Allow for incrementing saves/ratings
+      allow delete: if isAuthed() && 
+                       (resource.data.authorId == request.auth.uid || 
+                        request.auth.token.email_verified == true);
+
+      // Ratings subcollection
+      match /ratings/{userId} {
+        allow read: if isAuthed();
+        allow write: if isNotGuest() && isOwner(userId);
+      }
+
+      // Comments subcollection
+      match /comments/{commentId} {
+        allow read: if isAuthed();
+        allow create: if isNotGuest();
+        allow update, delete: if isNotGuest() && 
+                                  resource.data.userId == request.auth.uid;
       }
     }
   }

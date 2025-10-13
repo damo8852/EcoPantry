@@ -1,3 +1,4 @@
+﻿import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -9,9 +10,8 @@ import '../services/theme_service.dart';
 import '../services/parser.dart';
 import '../widgets/item_tile.dart';
 import '../models/grocery_type.dart';
-import '../models/recipe.dart';
 import 'scan.dart';
-import 'recipes_screen.dart';
+import 'recipes_hub_screen.dart';
 import 'auth_gate.dart';
 
 class HomePage extends StatefulWidget {
@@ -30,6 +30,7 @@ class _HomePageState extends State<HomePage> {
   bool _isSelectionMode = false;
   bool _isMultiSelectMode = false;
   Set<String> _selectedItems = {};
+  bool _isFabMenuOpen = false;
   
   // Sorting options
   String _sortOption = 'expiry_asc';
@@ -307,6 +308,53 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  void _freezeSelectedItems() async {
+    if (_selectedItems.isEmpty) return;
+    
+    final batch = _db.batch();
+    final user = _auth.currentUser!;
+    
+    for (final itemId in _selectedItems) {
+      final docRef = _db.collection('users').doc(user.uid).collection('items').doc(itemId);
+      final docSnapshot = await docRef.get();
+      if (docSnapshot.exists) {
+        final data = docSnapshot.data() as Map<String, dynamic>;
+        // Store the original expiry date when freezing
+        batch.update(docRef, {
+          'isFrozen': true,
+          'frozenAt': FieldValue.serverTimestamp(),
+          'originalExpiryDate': data['expiryDate'], // Store original expiry date
+        });
+      }
+    }
+    
+    try {
+      await batch.commit();
+      final frozenCount = _selectedItems.length;
+      setState(() {
+        _selectedItems.clear();
+        _isSelectionMode = false;
+        _isMultiSelectMode = false;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Froze $frozenCount items'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to freeze items: ${e.toString()}'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    }
+  }
 
   void _selectAllVisibleItems() {
     // This will be called from the app bar, but we need access to the current docs
@@ -759,99 +807,6 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
-  Widget _buildActionButton({
-    required VoidCallback onPressed,
-    required IconData icon,
-    required String label,
-    required Color color,
-    bool isFullWidth = false,
-  }) {
-    // Create much darker colors for dark mode with subtle glow effects
-    Color buttonColor = _themeService.isDarkMode 
-        ? const Color(0xFF1E1E1E) 
-        : Colors.white;
-    Color iconColor = _themeService.isDarkMode 
-        ? color.withOpacity(0.9)
-        : color;
-    Color textColor = _themeService.isDarkMode 
-        ? color.withOpacity(0.9)
-        : color;
-    
-    Widget button = Container(
-      decoration: BoxDecoration(
-        color: buttonColor,
-        borderRadius: BorderRadius.circular(12),
-        border: _themeService.isDarkMode 
-            ? Border.all(color: color.withOpacity(0.2), width: 1)
-            : null,
-        boxShadow: [
-          BoxShadow(
-            color: color.withOpacity(_themeService.isDarkMode ? 0.15 : 0.1),
-            blurRadius: _themeService.isDarkMode ? 8 : 6,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(12),
-          onTap: onPressed,
-          child: Padding(
-            padding: isFullWidth 
-              ? const EdgeInsets.symmetric(vertical: 12, horizontal: 16)
-              : const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-            child: isFullWidth 
-              ? Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      icon,
-                      color: iconColor,
-                      size: 20,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      label,
-                      style: TextStyle(
-                        color: textColor,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                )
-              : Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      icon,
-                      color: iconColor,
-                      size: 20,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      label,
-                      style: TextStyle(
-                        color: textColor,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
-                ),
-          ),
-        ),
-      ),
-    );
-
-    if (isFullWidth) {
-      return SizedBox(width: double.infinity, child: button);
-    }
-    return button;
-  }
-
   IconData _getGroceryIcon(GroceryType type) {
     switch (type) {
       case GroceryType.meat:
@@ -912,8 +867,6 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
-    final ownerId = user.uid;
-
     return Scaffold(
       backgroundColor: _themeService.isDarkMode ? ThemeService.darkBackground : ThemeService.lightBackground,
       appBar: AppBar(
@@ -933,7 +886,7 @@ class _HomePageState extends State<HomePage> {
               children: [
                 const SizedBox(width: 12),
                 Text(
-                  'My Fridge',
+                  'My Pantry',
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
                     color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : ThemeService.lightTextPrimary,
@@ -961,61 +914,111 @@ class _HomePageState extends State<HomePage> {
           ),
         ),
         actions: (_isSelectionMode || _isMultiSelectMode) ? [
-          IconButton(
+          // Use a single overflow menu button for all actions
+          PopupMenuButton<String>(
             icon: Icon(
-              Icons.select_all_rounded, 
-              size: 18,
-              color: _themeService.isDarkMode ? const Color(0xFF7BB3F0) : const Color(0xFF4A90E2),
+              Icons.more_vert,
+              color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : ThemeService.lightTextPrimary,
             ),
-            onPressed: () {
-              // We'll need to pass the current docs to select all
-              // For now, we'll select all visible items
-              _selectAllVisibleItems();
+            tooltip: 'Actions',
+            itemBuilder: (context) => [
+              PopupMenuItem(
+                value: 'select_all',
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.select_all_rounded,
+                      color: _themeService.isDarkMode ? const Color(0xFF7BB3F0) : const Color(0xFF4A90E2),
+                    ),
+                    const SizedBox(width: 12),
+                    Text(_selectedItems.length == _getCurrentItemsCount() ? 'Deselect All' : 'Select All'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'finish',
+                enabled: _selectedItems.isNotEmpty,
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.check_circle_rounded,
+                      color: _selectedItems.isEmpty 
+                          ? (_themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary)
+                          : (_themeService.isDarkMode ? const Color(0xFF81C784) : const Color(0xFF27AE60)),
+                    ),
+                    const SizedBox(width: 12),
+                    Text('Finish Selected'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'prioritize',
+                enabled: _selectedItems.isNotEmpty,
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.priority_high_rounded,
+                      color: _selectedItems.isEmpty 
+                          ? (_themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary)
+                          : (_themeService.isDarkMode ? const Color(0xFFE57373) : const Color(0xFFE74C3C)),
+                    ),
+                    const SizedBox(width: 12),
+                    Text('Prioritize Selected'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'freeze',
+                enabled: _selectedItems.isNotEmpty,
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.ac_unit_rounded,
+                      color: _selectedItems.isEmpty 
+                          ? (_themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary)
+                          : (_themeService.isDarkMode ? const Color(0xFF7BB3F0) : const Color(0xFF00BCD4)),
+                    ),
+                    const SizedBox(width: 12),
+                    Text('Freeze Selected'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'delete',
+                enabled: _selectedItems.isNotEmpty,
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.delete_rounded,
+                      color: _selectedItems.isEmpty 
+                          ? (_themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary)
+                          : (_themeService.isDarkMode ? const Color(0xFFE57373) : const Color(0xFFE74C3C)),
+                    ),
+                    const SizedBox(width: 12),
+                    Text('Delete Selected'),
+                  ],
+                ),
+              ),
+            ],
+            onSelected: (value) {
+              switch (value) {
+                case 'select_all':
+                  _selectAllVisibleItems();
+                  break;
+                case 'finish':
+                  _finishSelectedItems();
+                  break;
+                case 'prioritize':
+                  _prioritizeSelectedItems();
+                  break;
+                case 'freeze':
+                  _freezeSelectedItems();
+                  break;
+                case 'delete':
+                  _deleteSelectedItems();
+                  break;
+              }
             },
-            tooltip: _selectedItems.length == _getCurrentItemsCount() ? 'Deselect All' : 'Select All',
-            style: IconButton.styleFrom(
-              padding: const EdgeInsets.all(6),
-              minimumSize: const Size(28, 28),
-            ),
-          ),
-          IconButton(
-            icon: Icon(
-              Icons.check_circle_rounded, 
-              size: 18,
-              color: _themeService.isDarkMode ? const Color(0xFF81C784) : const Color(0xFF27AE60),
-            ),
-            onPressed: _selectedItems.isEmpty ? null : _finishSelectedItems,
-            tooltip: 'Finish Selected',
-            style: IconButton.styleFrom(
-              padding: const EdgeInsets.all(6),
-              minimumSize: const Size(28, 28),
-            ),
-          ),
-          IconButton(
-            icon: Icon(
-              Icons.priority_high_rounded, 
-              size: 18,
-              color: _themeService.isDarkMode ? const Color(0xFFE57373) : const Color(0xFFE74C3C),
-            ),
-            onPressed: _selectedItems.isEmpty ? null : _prioritizeSelectedItems,
-            tooltip: 'Prioritize Selected',
-            style: IconButton.styleFrom(
-              padding: const EdgeInsets.all(6),
-              minimumSize: const Size(28, 28),
-            ),
-          ),
-          IconButton(
-            icon: Icon(
-              Icons.delete_rounded, 
-              size: 18,
-              color: _themeService.isDarkMode ? const Color(0xFFE57373) : const Color(0xFFE74C3C),
-            ),
-            onPressed: _selectedItems.isEmpty ? null : _deleteSelectedItems,
-            tooltip: 'Delete Selected',
-            style: IconButton.styleFrom(
-              padding: const EdgeInsets.all(6),
-              minimumSize: const Size(28, 28),
-            ),
           ),
         ] : [
           IconButton(
@@ -1129,15 +1132,30 @@ class _HomePageState extends State<HomePage> {
                     ),
                   ),
                   
-                  // Finished Items
+                  // Recipes
                   _buildDrawerItem(
-                    icon: Icons.check_circle_rounded,
-                    title: 'Finished Items',
-                    subtitle: 'View your consumption history',
-                    iconColor: const Color(0xFF27AE60),
+                    icon: Icons.restaurant_menu_rounded,
+                    title: 'Recipes',
+                    subtitle: 'Create, save & discover recipes',
+                    iconColor: const Color(0xFFE67E22),
                     onTap: () {
                       Navigator.pop(context);
-                      _showFinishedItemsHistory();
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const RecipesHubScreen()),
+                      );
+                    },
+                  ),
+                  
+                  // Collections
+                  _buildDrawerItem(
+                    icon: Icons.collections_rounded,
+                    title: 'Collections',
+                    subtitle: 'View finished, frozen, or priority items',
+                    iconColor: const Color(0xFF9B59B6),
+                    onTap: () {
+                      Navigator.pop(context);
+                      _showFilterItemsDialog();
                     },
                   ),
                   
@@ -1267,44 +1285,201 @@ class _HomePageState extends State<HomePage> {
           ],
         ),
       ),
-      floatingActionButton: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          gradient: const LinearGradient(
-            colors: [Color(0xFF4A90E2), Color(0xFF357ABD)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xFF4A90E2).withOpacity(0.3),
-              blurRadius: 12,
-              offset: const Offset(0, 4),
+      floatingActionButton: Padding(
+        padding: EdgeInsets.only(
+          bottom: Platform.isAndroid 
+              ? MediaQuery.of(context).viewPadding.bottom > 0 
+                  ? 8.0  // Add extra padding if there's a navigation bar
+                  : 0.0
+              : 0.0,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            // Scan Receipt button
+            AnimatedScale(
+              scale: _isFabMenuOpen ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+              child: AnimatedOpacity(
+                opacity: _isFabMenuOpen ? 1.0 : 0.0,
+                duration: const Duration(milliseconds: 200),
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 12.0),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: _themeService.isDarkMode 
+                              ? ThemeService.darkCardBackground 
+                              : Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          'Scan Receipt',
+                          style: TextStyle(
+                            color: _themeService.isDarkMode 
+                                ? ThemeService.darkTextPrimary 
+                                : ThemeService.lightTextPrimary,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Container(
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF9B59B6), Color(0xFF8E44AD)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(30),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFF9B59B6).withOpacity(0.4),
+                              blurRadius: 12,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: FloatingActionButton(
+                          onPressed: () {
+                            setState(() => _isFabMenuOpen = false);
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (_) => const ScanPage()),
+                            );
+                          },
+                          backgroundColor: Colors.transparent,
+                          elevation: 0,
+                          heroTag: "scan_fab",
+                          child: const Icon(Icons.qr_code_scanner_rounded, color: Colors.white),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            // Manual Input button
+            AnimatedScale(
+              scale: _isFabMenuOpen ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+              child: AnimatedOpacity(
+                opacity: _isFabMenuOpen ? 1.0 : 0.0,
+                duration: const Duration(milliseconds: 200),
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 12.0),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: _themeService.isDarkMode 
+                              ? ThemeService.darkCardBackground 
+                              : Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          'Manual Input',
+                          style: TextStyle(
+                            color: _themeService.isDarkMode 
+                                ? ThemeService.darkTextPrimary 
+                                : ThemeService.lightTextPrimary,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Container(
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF3498DB), Color(0xFF2980B9)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(30),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFF3498DB).withOpacity(0.4),
+                              blurRadius: 12,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: FloatingActionButton(
+                          onPressed: () {
+                            setState(() => _isFabMenuOpen = false);
+                            _addItemDialog();
+                          },
+                          backgroundColor: Colors.transparent,
+                          elevation: 0,
+                          heroTag: "manual_fab",
+                          child: const Icon(Icons.edit_rounded, color: Colors.white),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            // Main Add button
+            Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                gradient: LinearGradient(
+                  colors: _isFabMenuOpen 
+                      ? [const Color(0xFFE74C3C), const Color(0xFFC0392B)]
+                      : [const Color(0xFF4A90E2), const Color(0xFF357ABD)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: (_isFabMenuOpen ? const Color(0xFFE74C3C) : const Color(0xFF4A90E2)).withOpacity(0.3),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: FloatingActionButton.extended(
+                onPressed: () {
+                  setState(() => _isFabMenuOpen = !_isFabMenuOpen);
+                },
+                backgroundColor: Colors.transparent,
+                elevation: 0,
+                heroTag: "add_fab",
+                icon: AnimatedRotation(
+                  turns: _isFabMenuOpen ? 0.125 : 0,
+                  duration: const Duration(milliseconds: 200),
+                  child: Icon(
+                    _isFabMenuOpen ? Icons.close_rounded : Icons.add_rounded,
+                    color: Colors.white,
+                  ),
+                ),
+                label: Text(
+                  _isFabMenuOpen ? 'Close' : 'Add Items',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
             ),
           ],
-        ),
-        child: FloatingActionButton.extended(
-          onPressed: _addItemDialog,
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          heroTag: "add_fab",
-          icon: const Icon(
-            Icons.add_rounded,
-            color: Colors.white,
-          ),
-          label: const Text(
-            'Add Item',
-            style: TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
         ),
       ),
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
               stream: _db
                   .collection('users')
-                  .doc(ownerId)
+                  .doc(user.uid)
                   .collection('items')
                   .orderBy('expiryDate')
                   .snapshots(),
@@ -1317,9 +1492,15 @@ class _HomePageState extends State<HomePage> {
                 }
                 final docs = snap.data!.docs;
                 
-                // Filter items by grocery type and must contain text
+                // Filter items by frozen status (exclude frozen), grocery type and must contain text
                 final filteredDocs = docs.where((doc) {
                   final data = doc.data();
+                  
+                  // Exclude frozen items from main view
+                  final isFrozen = data['isFrozen'] == true;
+                  if (isFrozen) {
+                    return false;
+                  }
                   
                   // Check grocery type filter
                   if (_selectedFilters.isNotEmpty) {
@@ -1399,8 +1580,6 @@ class _HomePageState extends State<HomePage> {
                                 ],
                               ),
                             ),
-                            const SizedBox(width: 16),
-                            _CarbonEmissionsWidget(isDarkMode: _themeService.isDarkMode),
                           ],
                         ),
                       ),
@@ -1460,46 +1639,6 @@ class _HomePageState extends State<HomePage> {
                                     ),
                                   ),
                                 ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    
-                    // Action buttons
-                    SliverToBoxAdapter(
-                      child: Container(
-                        margin: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: _buildActionButton(
-                              onPressed: _recommendRecipes,
-                                icon: Icons.restaurant_menu_rounded,
-                                label: 'Recipes',
-                                color: const Color(0xFFE67E22),
-                            ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: _buildActionButton(
-                              onPressed: () => Navigator.push(
-                                context,
-                                MaterialPageRoute(builder: (_) => const ScanPage()),
-                              ),
-                                icon: Icons.qr_code_scanner_rounded,
-                                label: 'Scan',
-                                color: const Color(0xFF9B59B6),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: _buildActionButton(
-                                onPressed: _showPrioritizedItems,
-                                icon: Icons.priority_high_rounded,
-                                label: 'Priority',
-                                color: const Color(0xFFE74C3C),
                               ),
                             ),
                           ],
@@ -1583,13 +1722,15 @@ class _HomePageState extends State<HomePage> {
                                   isDarkMode: _themeService.isDarkMode,
                                   isSelectionMode: _isSelectionMode,
                                   isSelected: _selectedItems.contains(itemId),
+                                  isFrozen: data['isFrozen'] == true,
                                   isCompactView: _themeService.isCompactView,
+                                  usagePercentage: (data['usagePercentage'] ?? 100.0).toDouble(),
                                   onEdit: () => _editItemDialog(ref, data),
                                   onUsedHalf: () async {
-                                    final q = data['quantity'];
-                                    final newQ = (q is num) ? (q / 2) : 1;
+                                    final currentPercentage = (data['usagePercentage'] ?? 100.0).toDouble();
+                                    final newPercentage = (currentPercentage / 2).clamp(0.0, 100.0);
                                     await ref.update({
-                                      'quantity': newQ,
+                                      'usagePercentage': newPercentage,
                                       'updatedAt': FieldValue.serverTimestamp(),
                                     });
                                   },
@@ -1935,17 +2076,17 @@ class _HomePageState extends State<HomePage> {
     Map<String, dynamic> data,
   ) async {
     final nameCtrl = TextEditingController(text: (data['name'] ?? '').toString());
-    final qtyCtrl = TextEditingController(text: (data['quantity'] ?? 1).toString());
     DateTime expiry =
         (data['expiryDate'] as Timestamp?)?.toDate() ?? DateTime.now().add(const Duration(days: 5));
     GroceryType selectedType = GroceryType.fromString(data['groceryType'] ?? 'other');
+    double usagePercentage = (data['usagePercentage'] ?? 100.0).toDouble();
 
     Future<void> save() async {
       await ref.update({
         'name': nameCtrl.text.trim(),
-        'quantity': int.tryParse(qtyCtrl.text) ?? 1,
         'expiryDate': Timestamp.fromDate(expiry),
         'groceryType': selectedType.name,
+        'usagePercentage': usagePercentage,
         'updatedAt': FieldValue.serverTimestamp(),
       });
     }
@@ -1961,11 +2102,6 @@ class _HomePageState extends State<HomePage> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Name')),
-                TextField(
-                  controller: qtyCtrl,
-                  decoration: const InputDecoration(labelText: 'Quantity'),
-                  keyboardType: TextInputType.number,
-                ),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<GroceryType>(
                   value: selectedType,
@@ -1991,6 +2127,19 @@ class _HomePageState extends State<HomePage> {
                   },
                   icon: const Icon(Icons.calendar_month),
                   label: Text('Expires ${expiry.toLocal().toString().split(' ').first}'),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Usage: ${usagePercentage.round()}%',
+                  style: const TextStyle(fontWeight: FontWeight.w500),
+                ),
+                Slider(
+                  value: usagePercentage,
+                  min: 0,
+                  max: 100,
+                  divisions: 20,
+                  label: '${usagePercentage.round()}%',
+                  onChanged: (value) => setLocal(() => usagePercentage = value),
                 ),
               ],
             ),
@@ -2153,6 +2302,118 @@ class _HomePageState extends State<HomePage> {
         );
       }
     }
+  }
+
+  Future<void> _showFilterItemsDialog() async {
+    if (!mounted) return;
+
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          'Collections',
+          style: TextStyle(
+            color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : ThemeService.lightTextPrimary,
+          ),
+        ),
+        backgroundColor: _themeService.isDarkMode ? ThemeService.darkCardBackground : Colors.white,
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Choose what type of items you want to view:',
+              style: TextStyle(
+                color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : ThemeService.lightTextPrimary,
+                fontSize: 16,
+              ),
+            ),
+            const SizedBox(height: 20),
+            
+            // Finished Items Option
+            ListTile(
+              leading: Icon(
+                Icons.check_circle_rounded,
+                color: const Color(0xFF27AE60),
+              ),
+              title: Text(
+                'Finished Items',
+                style: TextStyle(
+                  color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : ThemeService.lightTextPrimary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              subtitle: Text(
+                'View your consumption history',
+                style: TextStyle(
+                  color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary,
+                ),
+              ),
+              onTap: () {
+                Navigator.of(context).pop();
+                _showFinishedItemsHistory();
+              },
+            ),
+            
+            // Frozen Items Option
+            ListTile(
+              leading: Icon(
+                Icons.ac_unit_rounded,
+                color: const Color(0xFF00BCD4),
+              ),
+              title: Text(
+                'Frozen Items',
+                style: TextStyle(
+                  color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : ThemeService.lightTextPrimary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              subtitle: Text(
+                'View your frozen foods',
+                style: TextStyle(
+                  color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary,
+                ),
+              ),
+              onTap: () {
+                Navigator.of(context).pop();
+                _showFrozenItems();
+              },
+            ),
+            
+            // Priority Items Option
+            ListTile(
+              leading: Icon(
+                Icons.priority_high_rounded,
+                color: const Color(0xFFE74C3C),
+              ),
+              title: Text(
+                'Priority Items',
+                style: TextStyle(
+                  color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : ThemeService.lightTextPrimary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              subtitle: Text(
+                'Items marked for recipes',
+                style: TextStyle(
+                  color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary,
+                ),
+              ),
+              onTap: () {
+                Navigator.of(context).pop();
+                _showPrioritizedItems();
+              },
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _showPrioritizedItems() async {
@@ -2365,6 +2626,219 @@ class _HomePageState extends State<HomePage> {
       }
     } catch (e) {
       return 'recently';
+    }
+  }
+
+  Future<void> _showFrozenItems() async {
+    try {
+      final frozenItems = await _db
+          .collection('users')
+          .doc(user.uid)
+          .collection('items')
+          .where('isFrozen', isEqualTo: true)
+          .get();
+
+      if (!mounted) return;
+
+      // Sort items by frozenAt manually
+      final sortedItems = frozenItems.docs.toList()
+        ..sort((a, b) {
+          final aTime = a.data()['frozenAt'] as Timestamp?;
+          final bTime = b.data()['frozenAt'] as Timestamp?;
+          
+          if (aTime == null && bTime == null) return 0;
+          if (aTime == null) return 1;
+          if (bTime == null) return -1;
+          
+          return bTime.compareTo(aTime); // Descending order
+        });
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: _themeService.isDarkMode 
+          ? ThemeService.darkCard 
+          : ThemeService.lightCard,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => DraggableScrollableSheet(
+        initialChildSize: 0.6,
+        minChildSize: 0.3,
+        maxChildSize: 0.9,
+        expand: false,
+        builder: (context, scrollController) => Column(
+          children: [
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.ac_unit_rounded,
+                    color: const Color(0xFF00BCD4),
+                    size: 24,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Frozen Items',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: _themeService.isDarkMode 
+                          ? ThemeService.darkTextPrimary 
+                          : ThemeService.lightTextPrimary,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '${sortedItems.length}',
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: _themeService.isDarkMode 
+                          ? ThemeService.darkTextSecondary 
+                          : ThemeService.lightTextSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(),
+            Expanded(
+              child: sortedItems.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.ac_unit_outlined,
+                            size: 64,
+                            color: Colors.grey[400],
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'No frozen items',
+                            style: TextStyle(
+                              fontSize: 18,
+                              color: _themeService.isDarkMode 
+                                  ? ThemeService.darkTextSecondary 
+                                  : ThemeService.lightTextSecondary,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Freeze items to see them here',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: _themeService.isDarkMode 
+                                  ? ThemeService.darkTextSecondary 
+                                  : ThemeService.lightTextSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : ListView.builder(
+                      controller: scrollController,
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      itemCount: sortedItems.length,
+                      itemBuilder: (context, index) {
+                        final doc = sortedItems[index];
+                        final data = doc.data();
+                        final ref = doc.reference;
+                        
+                        return Card(
+                          margin: const EdgeInsets.symmetric(vertical: 4),
+                          color: _themeService.isDarkMode 
+                              ? ThemeService.darkBackground 
+                              : ThemeService.lightBackground,
+                          child: ListTile(
+                            leading: Icon(
+                              _getGroceryIcon(GroceryType.fromString(data['groceryType'] ?? 'other')),
+                              color: _getGroceryColor(GroceryType.fromString(data['groceryType'] ?? 'other')),
+                            ),
+                            title: Text(
+                              data['name'] ?? 'Unknown',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                color: _themeService.isDarkMode 
+                                    ? ThemeService.darkTextPrimary 
+                                    : ThemeService.lightTextPrimary,
+                              ),
+                            ),
+                            subtitle: Text(
+                              'Frozen ${_formatPrioritizedDate(data['frozenAt'])}',
+                              style: TextStyle(
+                                color: _themeService.isDarkMode 
+                                    ? ThemeService.darkTextSecondary 
+                                    : ThemeService.lightTextSecondary,
+                              ),
+                            ),
+                            trailing: PopupMenuButton<String>(
+                              onSelected: (value) async {
+                                if (value == 'unfreeze') {
+                                  final itemName = data['name'] ?? 'Unknown';
+                                  final originalExpiry = data['originalExpiryDate'];
+                                  final now = DateTime.now();
+                                  final expiryDate = originalExpiry ?? Timestamp.fromDate(now.add(const Duration(days: 7)));
+                                  
+                                  await ref.update({
+                                    'isFrozen': false,
+                                    'expiryDate': expiryDate,
+                                    'frozenAt': FieldValue.delete(),
+                                    'originalExpiryDate': FieldValue.delete(),
+                                  });
+                                  
+                                  if (mounted) {
+                                    Navigator.of(context).pop(); // Close the modal
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('Unfroze "$itemName"'),
+                                        backgroundColor: const Color(0xFFFF5722),
+                                      ),
+                                    );
+                                  }
+                                }
+                              },
+                              itemBuilder: (context) => [
+                                const PopupMenuItem(
+                                  value: 'unfreeze',
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.ac_unit, color: Color(0xFFFF5722)),
+                                      SizedBox(width: 8),
+                                      Text('Unfreeze'),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error loading frozen items: ${e.toString()}'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
     }
   }
 
@@ -2825,140 +3299,7 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<void> _recommendRecipes() async {
-    if (!mounted) return;
-
-    // Show loading dialog
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const CircularProgressIndicator(),
-            const SizedBox(height: 16),
-            Text(
-              'Generating simple recipes...',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Should take 10-20 seconds',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ],
-        ),
-      ),
-    );
-
-
-    try {
-      // Check if LLM is available
-      final isLLMAvailable = await LLMService().isAvailable();
-      if (!isLLMAvailable) {
-        if (!mounted) return;
-        Navigator.of(context).pop(); // Close loading dialog
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Local LLM not available. Please ensure Ollama is running.'),
-            duration: Duration(seconds: 3),
-          ),
-        );
-        return;
-      }
-
-      // Fetch all items from Firestore
-      final ownerId = user.uid;
-      final snapshot = await _db
-          .collection('users')
-          .doc(ownerId)
-          .collection('items')
-          .get();
-
-      if (snapshot.docs.isEmpty) {
-        // Allow recipe generation even with empty fridge
-        // The LLM will handle empty fridge case with pantry staples
-      }
-
-      // Extract ingredient names and prioritize items
-      final ingredients = snapshot.docs
-          .map((doc) => doc.data()['name']?.toString() ?? '')
-          .where((name) => name.isNotEmpty)
-          .toList();
-      
-      // Get prioritized items
-      final prioritizedItems = snapshot.docs
-          .where((doc) => doc.data()['isPrioritized'] == true)
-          .map((doc) => doc.data()['name']?.toString() ?? '')
-          .where((name) => name.isNotEmpty)
-          .toList();
-
-      if (ingredients.isEmpty) {
-        if (!mounted) return;
-        Navigator.of(context).pop(); // Close loading dialog
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No ingredients found')),
-        );
-        return;
-      }
-
-      // Filter ingredients by selected categories if any are selected
-      final filteredIngredients = _selectedFilters.isEmpty 
-          ? ingredients
-          : ingredients.where((ingredient) {
-              // For now, we'll use a simple approach - if filters are selected,
-              // we'll pass them to the LLM to focus on those categories
-              return true; // We'll let the LLM handle the filtering based on categories
-            }).toList();
-
-      // Generate recipes using Mistral AI (requesting 3 for better variety)
-      // Pass selected filters and prioritized items to help the LLM focus
-      final recipeData = await LLMService().generateRecipes(
-        filteredIngredients, 
-        count: 3,
-        preferredCategories: _selectedFilters.isNotEmpty 
-            ? _selectedFilters.map((type) => type.displayName).toList()
-            : null,
-        prioritizeFilteredItems: _selectedFilters.isNotEmpty,
-        prioritizedItems: prioritizedItems,
-      );
-
-      if (!mounted) return;
-      Navigator.of(context).pop(); // Close loading dialog
-
-      if (recipeData.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Could not generate recipes. Please try again.'),
-            duration: Duration(seconds: 3),
-          ),
-        );
-        return;
-      }
-
-      // Convert to Recipe objects
-      final recipes = recipeData.map((data) => Recipe.fromMap(data)).toList();
-
-      // Navigate to RecipesScreen
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => RecipesScreen(
-            recipes: recipes,
-            usedIngredients: ingredients,
-          ),
-        ),
-      );
-
-    } catch (e) {
-      if (!mounted) return;
-      Navigator.of(context).pop(); // Close loading dialog
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error generating recipes: $e')),
-      );
-    }
-  }
+  // Recipes moved to drawer menu - navigate to RecipesHubScreen via drawer item
 }
 
 class _EmptyState extends StatefulWidget {
@@ -2995,26 +3336,20 @@ class _EmptyStateState extends State<_EmptyState> {
           .collection('finished_items')
           .get();
 
-      int totalItems = 0;
       double totalCarbon = 0.0;
+      int itemCount = 0;
 
       for (var doc in snapshot.docs) {
         final data = doc.data();
-        final quantity = (data['quantity'] ?? 1) as num;
-        final groceryType = data['groceryType'] ?? 'other';
-        
-        totalItems += quantity.toInt();
-        
-        // Calculate carbon footprint based on food type
-        // These are approximate CO2 equivalents in kg per kg of food
-        double carbonPerKg = _getCarbonFootprint(groceryType);
-        totalCarbon += quantity * carbonPerKg * 0.5; // Assume average 0.5kg per item
+        final carbonSaved = data['carbonSaved'] as double? ?? 0.0;
+        totalCarbon += carbonSaved;
+        itemCount++;
       }
 
       if (mounted) {
         setState(() {
           _carbonSaved = totalCarbon;
-          _itemsFinished = totalItems;
+          _itemsFinished = itemCount;
           _isLoading = false;
         });
       }
@@ -3024,30 +3359,6 @@ class _EmptyStateState extends State<_EmptyState> {
           _isLoading = false;
         });
       }
-    }
-  }
-
-  double _getCarbonFootprint(String groceryType) {
-    // Carbon footprint in kg CO2 per kg of food (approximate values)
-    switch (groceryType) {
-      case 'meat':
-        return 27.0; // Beef has highest carbon footprint
-      case 'poultry':
-        return 6.9; // Chicken
-      case 'seafood':
-        return 13.6; // Fish
-      case 'dairy':
-        return 3.2; // Dairy products
-      case 'vegetable':
-        return 2.0; // Vegetables
-      case 'fruit':
-        return 1.0; // Fruits
-      case 'grain':
-        return 1.4; // Grains
-      case 'frozen':
-        return 3.0; // Frozen foods (higher due to energy)
-      default:
-        return 2.5; // Average
     }
   }
 
@@ -3063,141 +3374,105 @@ class _EmptyStateState extends State<_EmptyState> {
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'Your fridge is empty',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: widget.isDarkMode ? const Color(0xFFE8E8E8) : const Color(0xFF2C3E50),
-                ),
-              ),
-              const SizedBox(height: 12),
-              if (_isLoading)
-                const CircularProgressIndicator()
-              else ...[
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF27AE60).withOpacity(widget.isDarkMode ? 0.15 : 0.1),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: const Color(0xFF27AE60).withOpacity(0.3),
-                      width: 1,
-                    ),
-                  ),
-                  child: Column(
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Icon(
-                            Icons.eco_rounded,
-                            color: Color(0xFF27AE60),
-                            size: 20,
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            'Carbon Impact Saved',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: widget.isDarkMode ? const Color(0xFFE8E8E8) : const Color(0xFF2C3E50),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        _formatCarbonValue(_carbonSaved),
-                        style: const TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF27AE60),
-                        ),
-                      ),
-                      Text(
-                        'from ${_itemsFinished} items finished',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: widget.isDarkMode ? const Color(0xFF9E9E9E) : const Color(0xFF7F8C8D),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-                _buildSustainabilityTips(),
-              ],
-              const SizedBox(height: 16),
-              Text(
-                'Tap "Add Item" to start tracking your groceries',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: widget.isDarkMode ? const Color(0xFF9E9E9E) : const Color(0xFF7F8C8D),
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
 
-  Widget _buildSustainabilityTips() {
-    return Container(
-      height: 120, // Fixed height to ensure scrolling works
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF4A90E2).withOpacity(widget.isDarkMode ? 0.15 : 0.1),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: const Color(0xFF4A90E2).withOpacity(0.3),
-          width: 1,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(
-                Icons.lightbulb_outline_rounded,
-                color: Color(0xFF4A90E2),
-                size: 16,
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            // Empty fridge icon
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: widget.isDarkMode 
+                    ? Colors.grey[800] 
+                    : const Color(0xFFF5F5F5),
+                shape: BoxShape.circle,
               ),
-              const SizedBox(width: 6),
-              Text(
-                'Sustainability Tips',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: widget.isDarkMode ? const Color(0xFFE8E8E8) : const Color(0xFF2C3E50),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Expanded(
-            child: SingleChildScrollView(
-              child: Text(
-                '• Plan meals to reduce food waste\n• Buy local and seasonal produce\n• Use leftovers creatively\n• Compost food scraps\n• Store food properly to extend freshness\n• Freeze excess ingredients before they spoil\n• Use vegetable scraps for homemade broth\n• Choose imperfect produce to reduce waste',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: widget.isDarkMode ? const Color(0xFF9E9E9E) : const Color(0xFF7F8C8D),
-                  height: 1.4,
-                ),
+              child: Icon(
+                Icons.kitchen,
+                size: 64,
+                color: widget.isDarkMode 
+                    ? ThemeService.darkTextSecondary 
+                    : Colors.grey[400],
               ),
             ),
-          ),
-        ],
+            const SizedBox(height: 24),
+            Text(
+              'Your fridge is empty',
+              style: TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+                color: widget.isDarkMode 
+                    ? ThemeService.darkTextPrimary 
+                    : ThemeService.lightTextPrimary,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Start adding items to reduce food waste',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 16,
+                color: widget.isDarkMode 
+                    ? ThemeService.darkTextSecondary 
+                    : ThemeService.lightTextSecondary,
+              ),
+            ),
+            if (_itemsFinished > 0) ...[
+              const SizedBox(height: 32),
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF27AE60), Color(0xFF229954)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Column(
+                  children: [
+                    const Icon(
+                      Icons.eco,
+                      color: Colors.white,
+                      size: 48,
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Impact So Far',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _formatCarbonValue(_carbonSaved),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 32,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Text(
+                      'saved from $_itemsFinished items',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.9),
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
