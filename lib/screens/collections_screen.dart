@@ -55,7 +55,8 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
-        builder: (context) => DraggableScrollableSheet(
+        builder: (context) => SafeArea(
+          child: DraggableScrollableSheet(
           initialChildSize: 0.6,
           minChildSize: 0.3,
           maxChildSize: 0.9,
@@ -177,6 +178,7 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
               ),
             ],
           ),
+          ),
         ),
       );
     } catch (e) {
@@ -210,7 +212,8 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
-        builder: (context) => DraggableScrollableSheet(
+        builder: (context) => SafeArea(
+          child: DraggableScrollableSheet(
           initialChildSize: 0.6,
           minChildSize: 0.3,
           maxChildSize: 0.9,
@@ -372,6 +375,7 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
               ),
             ],
           ),
+          ),
         ),
       );
     } catch (e) {
@@ -417,7 +421,8 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
-        builder: (context) => DraggableScrollableSheet(
+        builder: (context) => SafeArea(
+          child: DraggableScrollableSheet(
           initialChildSize: 0.6,
           minChildSize: 0.3,
           maxChildSize: 0.9,
@@ -578,6 +583,7 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
                       ),
               ),
             ],
+          ),
           ),
         ),
       );

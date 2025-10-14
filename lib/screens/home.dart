@@ -448,13 +448,16 @@ class _HomePageState extends State<HomePage> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => Container(
-          height: MediaQuery.of(context).size.height * 0.7,
-          decoration: BoxDecoration(
-            color: _themeService.isDarkMode ? ThemeService.darkCardBackground : ThemeService.lightCardBackground,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-          ),
-          child: Column(
+        builder: (context, setDialogState) => SafeArea(
+          child: Padding(
+            padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+            child: Container(
+              height: MediaQuery.of(context).size.height * 0.7,
+              decoration: BoxDecoration(
+                color: _themeService.isDarkMode ? ThemeService.darkCardBackground : ThemeService.lightCardBackground,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+              ),
+              child: Column(
             children: [
               // Handle bar
               Container(
@@ -734,6 +737,8 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
             ],
+            ),
+            ),
           ),
         ),
       ),
@@ -1106,12 +1111,12 @@ class _HomePageState extends State<HomePage> {
         backgroundColor: _themeService.isDarkMode 
             ? ThemeService.darkBackground 
             : ThemeService.lightBackground,
-        child: Column(
-          children: [
+        child: SafeArea(
+          child: Column(
+            children: [
             // Custom header - simplified without background
-            SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
                 child: Row(
                   children: [
                     // Logo/Icon
@@ -1162,7 +1167,6 @@ class _HomePageState extends State<HomePage> {
                   ],
                 ),
               ),
-            ),
             
             // Menu items
             Expanded(
@@ -1360,6 +1364,7 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
           ],
+          ),
         ),
       ),
       floatingActionButton: Padding(
