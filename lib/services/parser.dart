@@ -82,7 +82,7 @@ class ReceiptParser {
       final prompt = _buildExtractionPrompt(receiptText);
       print('LLM Prompt: "$prompt"');
       
-      final response = await _callMistral(prompt);
+      final response = await _callOpenAI(prompt, useJsonMode: true);
       if (response != null && response.trim().isNotEmpty) {
         print('LLM Response: "$response"');
         final items = await _parseLLMResponse(response);
@@ -101,79 +101,71 @@ class ReceiptParser {
   }
 
   static String _buildExtractionPrompt(String receiptText) {
-    return '''Extract ALL food and grocery items from this receipt text. Return ONLY a JSON array of items.
+    return '''Extract ONLY food/grocery items from this receipt. Ignore non-food items, prices, taxes, totals, and store info.
 
-Receipt text:
-$receiptText
+RULES:
+1. Clean item names: Remove brands, weights, sizes, and store names
+2. Expand abbreviations (chkn → chicken, bf → beef)
+3. Combine duplicate items
+4. Skip non-food items (bags, household, pharmacy, etc.)
+5. Parse quantities carefully (look for "2x", "3@", or leading numbers)
 
-Rules:
-- Extract EVERY food/grocery item you can find
-- Include quantity if mentioned (default to 1 if not specified)
-- Clean up names (remove brand names, sizes, descriptions, explanations)
-- Categorize each item by grocery type
-- Return JSON array format: [{"name": "item name", "quantity": number, "type": "grocery_type"}]
-- Look for items even if the text is messy or has OCR errors
-- CRITICAL: Avoid duplicates - if you see "X brand avocados" AND "avocados" as separate items, only return "avocados"
-- CRITICAL: Avoid duplicates #2 - if you see "Country Style Pork Ribs" AND "Country Style Pork Ribs", only return "Country Style Pork Ribs"
-- CRITICAL: Keep names CLEAN and READABLE - no explanations, no "→" arrows, no extra text
-- CRITICAL: Expand abbreviations naturally (e.g., "chkn thgh" → "chicken thigh", "avoc" → "avocado")
-- CRITICAL: Remove brand names but keep descriptive terms (e.g., "Fever Tree Tonic" → "tonic water", "Haas Avocado" → "avocado", "Country Style Pork Ribs" → "country style pork ribs")
-- CRITICAL: Keep specific food descriptions when they add value (e.g., "Country Style Pork Ribs" not just "pork ribs")
-- CRITICAL: Merge similar items with different descriptions into single entries
-- CRITICAL: Return clean, readable food names with appropriate specificity
-
-Available types: meat, poultry, seafood, vegetable, fruit, dairy, grain, beverage, snack, condiment, frozen, other
+Types: meat, poultry, seafood, vegetable, fruit, dairy, grain, beverage, snack, condiment, frozen, other
 
 Examples:
-- "Heritage Farm® Bone In Skin On Chicken Thighs, 1 lb" → {"name": "chicken thighs", "quantity": 1, "type": "poultry"}
-- "2x Kroger AutumnCrisp Fresh Seedless Green Grapes" → {"name": "green grapes", "quantity": 2, "type": "fruit"}
-- "Kroger® 93/7 Ground Beef Tray 1 LB" → {"name": "ground beef", "quantity": 1, "type": "meat"}
-- "Fever Tree Tonic Water" → {"name": "tonic water", "quantity": 1, "type": "beverage"}
-- "Haas Avocado" → {"name": "avocado", "quantity": 1, "type": "fruit"}
-- "Country Style Pork Ribs" → {"name": "country style pork ribs", "quantity": 1, "type": "meat"}
-- "chkn thgh" → {"name": "chicken thigh", "quantity": 1, "type": "poultry"}
-- "grnd bf" → {"name": "ground beef", "quantity": 1, "type": "meat"}
-- "avoc" → {"name": "avocado", "quantity": 1, "type": "fruit"}
-- "tom" → {"name": "tomato", "quantity": 1, "type": "vegetable"}
+- "Heritage Farm Chicken Thighs 1 lb" → {"name": "chicken thighs", "quantity": 1, "type": "poultry"}
+- "2x Kroger Green Grapes" → {"name": "green grapes", "quantity": 2, "type": "fruit"}
+- "chkn thgh" → {"name": "chicken thighs", "quantity": 1, "type": "poultry"}
+- "3@ Organic Avocados" → {"name": "avocados", "quantity": 3, "type": "fruit"}
+- "SF SILKEN TOFU" → {"name": "silken tofu", "quantity": 1, "type": "other"}
 
-JSON array:''';
+Receipt Text:
+$receiptText
+
+Return JSON only: {"items": [{"name": "...", "quantity": 1, "type": "..."}]}''';
   }
 
-  static Future<String?> _callMistral(String prompt) async {
+  static Future<String?> _callOpenAI(String prompt, {bool useJsonMode = false}) async {
     try {
-      // Import ConfigService to get API key
       final configService = ConfigService();
-      final apiKey = await configService.getMistralApiKey();
+      final apiKey = await configService.getOpenAiApiKey();
       
       if (apiKey == null) {
-        print('No Mistral API key found for receipt parsing');
+        print('No OpenAI API key found for receipt parsing');
         return null;
       }
 
+      final requestBody = {
+        'model': 'gpt-4o-mini', // Fast, accurate, and cost-effective
+        'messages': [
+          {
+            'role': 'user',
+            'content': prompt,
+          }
+        ],
+        'temperature': 0.1, // Low temperature for consistent parsing
+        'max_tokens': 1000, // Enough for receipt items
+      };
+
+      // Enable JSON mode if requested
+      if (useJsonMode) {
+        requestBody['response_format'] = {'type': 'json_object'};
+      }
+
       final response = await http.post(
-        Uri.parse('https://api.mistral.ai/v1/chat/completions'),
+        Uri.parse('https://api.openai.com/v1/chat/completions'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $apiKey',
         },
-        body: json.encode({
-          'model': 'mistral-tiny', // Fast and cost-effective for parsing
-          'messages': [
-            {
-              'role': 'user',
-              'content': prompt,
-            }
-          ],
-          'temperature': 0.1, // Low temperature for consistent parsing
-          'max_tokens': 1000, // Enough for receipt items
-        }),
+        body: json.encode(requestBody),
       ).timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         return data['choices']?[0]?['message']?['content']?.toString().trim();
       } else {
-        print('Mistral API error: ${response.statusCode} - ${response.body}');
+        print('OpenAI API error: ${response.statusCode} - ${response.body}');
       }
     } catch (e) {
       print('HTTP request error: $e');
@@ -190,16 +182,20 @@ JSON array:''';
       // Remove any markdown code blocks
       cleanResponse = cleanResponse.replaceAll(RegExp(r'```json\s*|\s*```'), '');
       
-      // Try to find JSON array in the response
-      final jsonMatch = RegExp(r'\[.*\]', dotAll: true).firstMatch(cleanResponse);
-      if (jsonMatch != null) {
-        cleanResponse = jsonMatch.group(0)!;
+      final data = json.decode(cleanResponse);
+      
+      // Handle new format with "items" key (JSON object)
+      List? itemsList;
+      if (data is Map<String, dynamic> && data.containsKey('items')) {
+        itemsList = data['items'] as List?;
+      } else if (data is List) {
+        // Fallback: handle old array format
+        itemsList = data;
       }
       
-      final data = json.decode(cleanResponse);
-      if (data is List) {
+      if (itemsList != null) {
         final items = <ParsedItem>[];
-        for (final item in data) {
+        for (final item in itemsList) {
           if (item is Map<String, dynamic>) {
             final name = item['name']?.toString();
             final quantity = item['quantity'];
@@ -531,11 +527,11 @@ JSON array:''';
     'chocolate': 'chocolate',
   };
 
-  /// AI-powered food name simplification using Mistral
+  /// AI-powered food name simplification using OpenAI
   static Future<String?> _simplifyFoodNameWithAI(String name) async {
     try {
       final prompt = _buildFoodSimplificationPrompt(name);
-      final response = await _callMistral(prompt);
+      final response = await _callOpenAI(prompt);
       
       if (response != null && response.trim().isNotEmpty) {
         String simplified = response.trim();
@@ -578,31 +574,14 @@ JSON array:''';
   }
 
   static String _buildFoodSimplificationPrompt(String foodName) {
-    return '''Simplify this food item name to be clean and readable. Return ONLY the simplified name, no explanation or extra text.
-
-Food name: "$foodName"
-
-Rules:
-- Expand abbreviations naturally (chkn → chicken, grnd → ground, bf → beef, chz → cheese, avoc → avocado, tom → tomato)
-- Remove brand names but keep descriptive terms (Fever Tree Tonic → tonic water, Haas Avocado → avocado, Country Style Pork Ribs → country style pork ribs)
-- Remove measurements and sizes
-- Keep specific food descriptions when they add value
-- Make it clean and readable
-- Return only the food name, nothing else
+    return '''Clean up food name: expand abbreviations, remove brands/sizes. Return ONLY the name.
 
 Examples:
 "chkn thgh" → "chicken thigh"
-"grnd bf" → "ground beef" 
-"avoc" → "avocado"
-"tom" → "tomato"
-"chz" → "cheese"
-"Fever Tree Tonic Water" → "tonic water"
-"Haas Avocado" → "avocado"
-"Country Style Pork Ribs" → "country style pork ribs"
-"milk 1% lowfat" → "lowfat milk"
-"grn beans" → "green beans"
+"grnd bf" → "ground beef"
+"Fever Tree Tonic" → "tonic water"
 
-Simplified name:''';
+"$foodName" →''';
   }
 
   /// Static mapping fallback for food name simplification

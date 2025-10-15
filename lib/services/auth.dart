@@ -128,4 +128,81 @@ class AuthService {
   Future<void> deleteAccount() async {
     await _auth.currentUser?.delete();
   }
+
+  // Email/Password Authentication
+  Future<UserCredential> signInWithEmailPassword(String email, String password) async {
+    try {
+      return await _auth.signInWithEmailAndPassword(
+        email: email.trim(),
+        password: password,
+      );
+    } on FirebaseAuthException catch (e) {
+      switch (e.code) {
+        case 'user-not-found':
+          throw Exception('No account found with this email.');
+        case 'wrong-password':
+          throw Exception('Incorrect password.');
+        case 'invalid-email':
+          throw Exception('Invalid email address.');
+        case 'user-disabled':
+          throw Exception('This account has been disabled.');
+        default:
+          throw Exception('Sign-in failed: ${e.message}');
+      }
+    } catch (e) {
+      throw Exception('Sign-in failed: $e');
+    }
+  }
+
+  Future<UserCredential> registerWithEmailPassword(String email, String password) async {
+    try {
+      return await _auth.createUserWithEmailAndPassword(
+        email: email.trim(),
+        password: password,
+      );
+    } on FirebaseAuthException catch (e) {
+      switch (e.code) {
+        case 'email-already-in-use':
+          throw Exception('An account already exists with this email.');
+        case 'invalid-email':
+          throw Exception('Invalid email address.');
+        case 'weak-password':
+          throw Exception('Password is too weak. Use at least 6 characters.');
+        default:
+          throw Exception('Registration failed: ${e.message}');
+      }
+    } catch (e) {
+      throw Exception('Registration failed: $e');
+    }
+  }
+
+  Future<void> sendPasswordResetEmail(String email) async {
+    try {
+      await _auth.sendPasswordResetEmail(email: email.trim());
+    } on FirebaseAuthException catch (e) {
+      switch (e.code) {
+        case 'user-not-found':
+          throw Exception('No account found with this email.');
+        case 'invalid-email':
+          throw Exception('Invalid email address.');
+        default:
+          throw Exception('Failed to send reset email: ${e.message}');
+      }
+    } catch (e) {
+      throw Exception('Failed to send reset email: $e');
+    }
+  }
+
+  Future<void> updatePassword(String newPassword) async {
+    try {
+      await _auth.currentUser?.updatePassword(newPassword);
+    } on FirebaseAuthException catch (e) {
+      if (e.code == 'requires-recent-login') {
+        throw Exception('Please sign in again to change your password.');
+      }
+      throw Exception('Failed to update password: ${e.message}');
+    } catch (e) {
+      throw Exception('Failed to update password: $e');
+    }
+  }
 }

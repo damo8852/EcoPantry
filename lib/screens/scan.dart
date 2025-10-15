@@ -1,17 +1,20 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
-// Removed mobile_scanner import
+import 'package:camera/camera.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:http/http.dart' as http;
 
 import '../services/parser.dart';
-// Removed notifications import (was only used for barcode functionality)
 import '../services/llm_service.dart';
 import '../services/theme_service.dart';
+import '../services/config_service.dart';
 import '../models/grocery_type.dart';
 
 class ScanPage extends StatefulWidget {
@@ -24,7 +27,6 @@ class _ScanPageState extends State<ScanPage> with SingleTickerProviderStateMixin
   final _auth = FirebaseAuth.instance;
   final _db = FirebaseFirestore.instance;
 
-  // Removed barcode scanner components
   final _textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
 
   List<ParsedItem> _preview = [];
@@ -37,7 +39,14 @@ class _ScanPageState extends State<ScanPage> with SingleTickerProviderStateMixin
   ExpiryRules? _rules;
   UpcMap? _upc;
 
-  // Removed barcode handling
+  // Real-time camera scanning
+  CameraController? _cameraController;
+  bool _isCameraMode = false;
+  bool _isProcessingFrame = false;
+  String _liveText = '';
+  String _lastProcessedText = '';
+  Timer? _processingTimer;
+  final List<ParsedItem> _liveDetectedItems = [];
 
   @override
   void initState() {
@@ -64,8 +73,9 @@ class _ScanPageState extends State<ScanPage> with SingleTickerProviderStateMixin
   @override
   void dispose() {
     _themeService.removeListener(_onThemeChanged);
-    // Removed tab controller and barcode scanner disposal
     _textRecognizer.close();
+    _processingTimer?.cancel();
+    _cameraController?.dispose();
     super.dispose();
   }
 
@@ -76,8 +86,326 @@ class _ScanPageState extends State<ScanPage> with SingleTickerProviderStateMixin
         _err = null;
         _isSelectionMode = false;
         _selectedItems.clear();
+        _liveText = '';
+        _lastProcessedText = '';
+        _liveDetectedItems.clear();
       });
     }
+  }
+
+  Future<void> _startLiveCamera() async {
+    try {
+      // Request camera permission
+      final cameraStatus = await Permission.camera.request();
+      if (!cameraStatus.isGranted) {
+        setState(() {
+          _err = 'Camera permission is required for live scanning';
+        });
+        return;
+      }
+
+      // Get available cameras
+      final cameras = await availableCameras();
+      if (cameras.isEmpty) {
+        setState(() {
+          _err = 'No camera found on device';
+        });
+        return;
+      }
+
+      // Initialize camera controller
+      _cameraController = CameraController(
+        cameras.first,
+        ResolutionPreset.high,
+        enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.jpeg,
+      );
+
+      await _cameraController!.initialize();
+      
+      if (!mounted) return;
+
+      setState(() {
+        _isCameraMode = true;
+        _err = null;
+      });
+
+      // Start processing frames periodically
+      _processingTimer = Timer.periodic(const Duration(seconds: 2), (_) => _processCurrentFrame());
+    } catch (e) {
+      setState(() {
+        _err = 'Failed to initialize camera: $e';
+      });
+    }
+  }
+
+  Future<void> _processCurrentFrame() async {
+    if (_isProcessingFrame || _cameraController == null || !_cameraController!.value.isInitialized) {
+      return;
+    }
+
+    try {
+      _isProcessingFrame = true;
+      
+      final image = await _cameraController!.takePicture();
+      final inputImage = InputImage.fromFilePath(image.path);
+      final recognizedText = await _textRecognizer.processImage(inputImage);
+      
+      if (mounted) {
+        setState(() {
+          _liveText = recognizedText.text;
+        });
+        
+        // Only process if text has changed significantly
+        if (_hasSignificantChange(recognizedText.text, _lastProcessedText)) {
+          _lastProcessedText = recognizedText.text;
+          _processTextForFoodItems(recognizedText.text);
+        }
+      }
+
+      // Clean up temp file
+      try {
+        await File(image.path).delete();
+      } catch (_) {}
+    } catch (e) {
+      print('Error processing frame: $e');
+    } finally {
+      _isProcessingFrame = false;
+    }
+  }
+
+  bool _hasSignificantChange(String newText, String oldText) {
+    if (oldText.isEmpty) return newText.isNotEmpty;
+    
+    // Calculate simple similarity - if less than 70% similar, it's significant
+    final newWords = newText.toLowerCase().split(RegExp(r'\s+'));
+    final oldWords = oldText.toLowerCase().split(RegExp(r'\s+'));
+    
+    final commonWords = newWords.where((word) => oldWords.contains(word)).length;
+    final totalWords = (newWords.length + oldWords.length) / 2;
+    
+    if (totalWords == 0) return false;
+    
+    final similarity = commonWords / totalWords;
+    return similarity < 0.7; // More than 30% change
+  }
+
+  Future<void> _processTextForFoodItems(String text) async {
+    // Extract just the new lines/content that might be food items
+    final lines = text.split('\n').where((line) => line.trim().isNotEmpty).toList();
+    
+    for (final line in lines) {
+      // Skip if we've already processed a very similar item
+      if (_liveDetectedItems.any((item) => 
+        item.name.toLowerCase().contains(line.toLowerCase().trim()) ||
+        line.toLowerCase().trim().contains(item.name.toLowerCase())
+      )) {
+        continue;
+      }
+      
+      // Check if this line is a food item using AI
+      final foodItem = await _checkIfFoodItem(line);
+      if (foodItem != null) {
+        // Check if we already have a very similar item
+        if (!_isDuplicateItem(foodItem)) {
+          if (mounted) {
+            setState(() {
+              _liveDetectedItems.add(foodItem);
+            });
+          }
+        }
+      }
+    }
+  }
+
+  bool _isDuplicateItem(ParsedItem newItem) {
+    final newItemWords = newItem.name.toLowerCase().split(' ').where((w) => w.length > 2).toSet();
+    
+    for (final existingItem in _liveDetectedItems) {
+      final existingWords = existingItem.name.toLowerCase().split(' ').where((w) => w.length > 2).toSet();
+      
+      // If they share the core food words, it's a duplicate
+      // For example: "chicken breast" and "boneless chicken breast" both have "chicken" and "breast"
+      final commonWords = newItemWords.intersection(existingWords);
+      final maxWords = newItemWords.length > existingWords.length ? newItemWords.length : existingWords.length;
+      
+      // If more than 60% of words match, it's likely the same item
+      if (commonWords.length >= 2 && commonWords.length / maxWords > 0.6) {
+        return true;
+      }
+      
+      // Exact core match (like "chicken" matches between items)
+      if (newItemWords.contains('chicken') && existingWords.contains('chicken') ||
+          newItemWords.contains('beef') && existingWords.contains('beef') ||
+          newItemWords.contains('pork') && existingWords.contains('pork') ||
+          newItemWords.contains('turkey') && existingWords.contains('turkey')) {
+        // If they're both the same type of meat/protein, check if they're similar cuts
+        final cuts = {'breast', 'thigh', 'wing', 'leg', 'ground', 'steak', 'chop', 'ribs'};
+        final newCuts = newItemWords.intersection(cuts);
+        final existingCuts = existingWords.intersection(cuts);
+        
+        // If they have the same cut, it's a duplicate
+        if (newCuts.isNotEmpty && existingCuts.isNotEmpty && newCuts.intersection(existingCuts).isNotEmpty) {
+          return true;
+        }
+      }
+    }
+    
+    return false;
+  }
+
+  Future<ParsedItem?> _checkIfFoodItem(String text) async {
+    try {
+      final prompt = _buildFoodCheckPrompt(text);
+      final response = await _callAIForFoodCheck(prompt);
+      
+      if (response != null && response.trim().isNotEmpty) {
+        return _parseFoodCheckResponse(response);
+      }
+    } catch (e) {
+      print('AI food check failed for "$text": $e');
+    }
+    
+    return null;
+  }
+
+  String _buildFoodCheckPrompt(String text) {
+    return '''Is this a food/grocery item? If yes, return JSON with cleaned name.
+
+RULES:
+- KEEP important parts: cuts (breast, thigh, wing), forms (ground, whole, sliced)
+- REMOVE descriptors: boneless, skinless, organic, fresh, frozen, raw, etc.
+- REMOVE brands UNLESS it's a branded product (Coke, Sprite, Oreos, etc.)
+
+Examples:
+- "Boneless Skinless Chicken Breast" → "chicken breast"
+- "Fresh Organic Apples" → "apple"
+- "Ground Beef 80/20" → "ground beef"
+- "Sprite 2L" → "sprite"
+- "Raw Chicken Thighs" → "chicken thighs"
+
+Types: meat, poultry, seafood, vegetable, fruit, dairy, grain, beverage, snack, condiment, frozen, other
+
+Text: "$text"
+
+Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
+  }
+
+  Future<String?> _callAIForFoodCheck(String prompt) async {
+    try {
+      final configService = ConfigService();
+      final apiKey = await configService.getOpenAiApiKey();
+      
+      if (apiKey == null) return null;
+
+      final requestBody = {
+        'model': 'gpt-4o-mini',
+        'messages': [
+          {'role': 'user', 'content': prompt}
+        ],
+        'temperature': 0.1,
+        'max_tokens': 50, // Very small for efficiency
+      };
+
+      final response = await http.post(
+        Uri.parse('https://api.openai.com/v1/chat/completions'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $apiKey',
+        },
+        body: json.encode(requestBody),
+      ).timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return data['choices']?[0]?['message']?['content']?.toString().trim();
+      }
+    } catch (e) {
+      print('AI call error: $e');
+    }
+    
+    return null;
+  }
+
+  ParsedItem? _parseFoodCheckResponse(String response) {
+    try {
+      final cleaned = response.trim().toLowerCase();
+      if (cleaned == 'null' || cleaned.isEmpty) return null;
+      
+      // Remove any markdown code blocks
+      var jsonStr = response.replaceAll(RegExp(r'```json\s*|\s*```'), '').trim();
+      
+      final data = json.decode(jsonStr);
+      
+      if (data is Map<String, dynamic>) {
+        final name = data['name']?.toString();
+        final quantity = data['quantity'];
+        final type = data['type']?.toString();
+        
+        if (name != null && name.isNotEmpty) {
+          final qty = quantity is int ? quantity : (int.tryParse(quantity?.toString() ?? '1') ?? 1);
+          return ParsedItem(
+            name: _titleCase(name),
+            quantity: qty,
+            type: type != null ? GroceryType.fromString(type) : GroceryType.other,
+          );
+        }
+      }
+    } catch (e) {
+      print('Failed to parse food check response: $e');
+    }
+    
+    return null;
+  }
+
+  String _titleCase(String s) =>
+      s.split(' ').map((w) => w.isEmpty ? w : '${w[0].toUpperCase()}${w.substring(1).toLowerCase()}').join(' ');
+
+  Future<void> _finishLiveScanning() async {
+    if (_liveDetectedItems.isEmpty) {
+      setState(() {
+        _err = 'No food items detected yet. Keep scanning or try manual entry.';
+      });
+      return;
+    }
+
+    setState(() {
+      _busy = true;
+    });
+
+    try {
+      // Use the items we've already detected
+      if (mounted) {
+        setState(() {
+          _preview = List.from(_liveDetectedItems);
+          _isCameraMode = false;
+          _liveDetectedItems.clear();
+        });
+        _cameraController?.dispose();
+        _cameraController = null;
+        _processingTimer?.cancel();
+      }
+    } catch (e) {
+      setState(() {
+        _err = 'Failed to process items: $e';
+      });
+    } finally {
+      setState(() {
+        _busy = false;
+      });
+    }
+  }
+
+  void _exitCameraMode() {
+    _processingTimer?.cancel();
+    _cameraController?.dispose();
+    _cameraController = null;
+    setState(() {
+      _isCameraMode = false;
+      _liveText = '';
+      _lastProcessedText = '';
+      _liveDetectedItems.clear();
+    });
   }
 
 
@@ -399,7 +727,7 @@ class _ScanPageState extends State<ScanPage> with SingleTickerProviderStateMixin
           : Row(
               children: [
                 const Icon(
-                  Icons.qr_code_scanner_rounded,
+                  Icons.receipt_long_rounded,
                   color: Color(0xFF27AE60),
                   size: 24,
                 ),
@@ -467,16 +795,46 @@ class _ScanPageState extends State<ScanPage> with SingleTickerProviderStateMixin
   Widget _buildReceiptTab() {
     return Column(
       children: [
+        // Header Section
+        Container(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Scan Your Receipt',
+                style: TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                  color: _themeService.isDarkMode 
+                      ? ThemeService.darkTextPrimary 
+                      : const Color(0xFF2C3E50),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Quickly add items to your fridge by scanning receipts',
+                style: TextStyle(
+                  fontSize: 16,
+                  color: _themeService.isDarkMode 
+                      ? ThemeService.darkTextSecondary 
+                      : const Color(0xFF7F8C8D),
+                ),
+              ),
+            ],
+          ),
+        ),
+
         if (_err != null)
           Container(
-            margin: const EdgeInsets.all(16),
-            padding: const EdgeInsets.all(12),
+            margin: const EdgeInsets.symmetric(horizontal: 20),
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: const Color(0xFFE74C3C).withOpacity(0.1),
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(16),
               border: Border.all(
                 color: const Color(0xFFE74C3C).withOpacity(0.3),
-                width: 1,
+                width: 1.5,
               ),
             ),
             child: Row(
@@ -484,9 +842,9 @@ class _ScanPageState extends State<ScanPage> with SingleTickerProviderStateMixin
                 const Icon(
                   Icons.error_outline_rounded,
                   color: Color(0xFFE74C3C),
-                  size: 20,
+                  size: 24,
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Text(
                     _err!,
@@ -500,335 +858,915 @@ class _ScanPageState extends State<ScanPage> with SingleTickerProviderStateMixin
               ],
             ),
           ),
+        
+        const SizedBox(height: 16),
+        
+        // Scan Options Cards
+        if (_preview.isEmpty && !_busy && !_isCameraMode) ...[
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Column(
+              children: [
+                _buildScanOptionCard(
+                  icon: Icons.videocam_rounded,
+                  iconColor: const Color(0xFF27AE60),
+                  title: 'Live Camera Scanner',
+                  description: 'Real-time text recognition with camera',
+                  onTap: _startLiveCamera,
+                ),
+                const SizedBox(height: 16),
+                _buildScanOptionCard(
+                  icon: Icons.photo_library_rounded,
+                  iconColor: const Color(0xFF9B59B6),
+                  title: 'Choose from Gallery',
+                  description: 'Select a photo of your receipt',
+                  onTap: () => _pickAndProcess(ImageSource.gallery),
+                ),
+                const SizedBox(height: 16),
+                _buildScanOptionCard(
+                  icon: Icons.camera_alt_rounded,
+                  iconColor: const Color(0xFF3498DB),
+                  title: 'Take a Photo',
+                  description: 'Capture your receipt with camera',
+                  onTap: () => _pickAndProcess(ImageSource.camera),
+                ),
+              ],
+            ),
+          ),
+        ],
+        
         Expanded(
-          child: _busy
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF27AE60).withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(20),
+          child: _isCameraMode
+              ? _buildCameraView()
+              : _busy
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(24),
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                colors: [Color(0xFF27AE60), Color(0xFF2ECC71)],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                              borderRadius: BorderRadius.circular(24),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: const Color(0xFF27AE60).withOpacity(0.3),
+                                  blurRadius: 20,
+                                  offset: const Offset(0, 8),
+                                ),
+                              ],
+                            ),
+                            child: const CircularProgressIndicator(
+                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                              strokeWidth: 3,
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+                          Text(
+                            'Processing receipt...',
+                            style: TextStyle(
+                              color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : const Color(0xFF2C3E50),
+                              fontSize: 18,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'This may take a few seconds',
+                            style: TextStyle(
+                              color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : const Color(0xFF7F8C8D),
+                              fontSize: 14,
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : _preview.isEmpty
+                      ? _buildEmptyState()
+                      : _buildItemsList(),
+        ),
+        
+        // Action Buttons
+        if (_preview.isNotEmpty) 
+          Container(
+            margin: const EdgeInsets.only(top: 8),
+            padding: EdgeInsets.only(
+              left: 20,
+              right: 20,
+              top: 20,
+              bottom: Platform.isAndroid 
+                  ? MediaQuery.of(context).viewPadding.bottom > 0 
+                      ? MediaQuery.of(context).viewPadding.bottom + 8.0  // Add extra padding if there's a navigation bar
+                      : 20.0
+                  : 20.0,
+            ),
+            decoration: BoxDecoration(
+              color: _themeService.isDarkMode ? ThemeService.darkCardBackground : Colors.white,
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(24),
+                topRight: Radius.circular(24),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(_themeService.isDarkMode ? 0.3 : 0.1),
+                  blurRadius: 20,
+                  offset: const Offset(0, -4),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildModernActionButton(
+                        icon: Icons.check_circle_rounded,
+                        label: _busy ? 'Saving...' : 'Save All',
+                        color: const Color(0xFF27AE60),
+                        onPressed: _busy ? null : _saveAll,
+                        isLoading: _busy,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _buildModernActionButton(
+                        icon: Icons.clear_all_rounded,
+                        label: 'Clear',
+                        color: const Color(0xFFE74C3C),
+                        onPressed: _busy ? null : _clearPreview,
+                        isSecondary: true,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildScanOptionCard({
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required String description,
+    required VoidCallback onTap,
+  }) {
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: _themeService.isDarkMode 
+                  ? [
+                      ThemeService.darkCardBackground, 
+                      ThemeService.darkCardBackground.withOpacity(0.8)
+                    ]
+                  : [Colors.white, iconColor.withOpacity(0.05)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: iconColor.withOpacity(0.2),
+              width: 1.5,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: iconColor.withOpacity(0.15),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: iconColor.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Icon(
+                  icon,
+                  size: 32,
+                  color: iconColor,
+                ),
+              ),
+              const SizedBox(width: 20),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: _themeService.isDarkMode 
+                            ? ThemeService.darkTextPrimary 
+                            : const Color(0xFF2C3E50),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      description,
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: _themeService.isDarkMode 
+                            ? ThemeService.darkTextSecondary 
+                            : const Color(0xFF7F8C8D),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.arrow_forward_ios_rounded,
+                size: 20,
+                color: _themeService.isDarkMode 
+                    ? ThemeService.darkTextSecondary 
+                    : const Color(0xFFBDC3C7),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildModernActionButton({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback? onPressed,
+    bool isLoading = false,
+    bool isSecondary = false,
+  }) {
+    return Container(
+      height: 56,
+      decoration: BoxDecoration(
+        gradient: !isSecondary && onPressed != null
+            ? LinearGradient(
+                colors: [color, color.withOpacity(0.8)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              )
+            : null,
+        color: isSecondary
+            ? (onPressed != null ? color.withOpacity(0.1) : color.withOpacity(0.05))
+            : null,
+        borderRadius: BorderRadius.circular(16),
+        border: isSecondary
+            ? Border.all(color: color.withOpacity(0.3), width: 1.5)
+            : null,
+        boxShadow: !isSecondary && onPressed != null
+            ? [
+                BoxShadow(
+                  color: color.withOpacity(0.3),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ]
+            : null,
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: onPressed,
+          child: Center(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (isLoading)
+                  SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        isSecondary ? color : Colors.white,
+                      ),
+                    ),
+                  )
+                else
+                  Icon(
+                    icon,
+                    color: isSecondary ? color : Colors.white,
+                    size: 20,
+                  ),
+                const SizedBox(width: 8),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: isSecondary ? color : Colors.white,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 16,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return const SizedBox.shrink();
+  }
+
+  Widget _buildCameraView() {
+    if (_cameraController == null || !_cameraController!.value.isInitialized) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const CircularProgressIndicator(color: Color(0xFF27AE60)),
+            const SizedBox(height: 16),
+            Text(
+              'Initializing camera...',
+              style: TextStyle(
+                color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : const Color(0xFF2C3E50),
+                fontSize: 16,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Stack(
+      children: [
+        // Camera Preview
+        Positioned.fill(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(20),
+            child: CameraPreview(_cameraController!),
+          ),
+        ),
+        
+        // Dark overlay with transparent scanning area
+        Positioned.fill(
+          child: Container(
+            margin: const EdgeInsets.all(20),
+            child: Stack(
+              children: [
+                // Semi-transparent overlay
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.5),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                ),
+                // Scanning rectangle cutout
+                Center(
+                  child: Container(
+                    width: MediaQuery.of(context).size.width * 0.7,
+                    height: MediaQuery.of(context).size.height * 0.3,
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                        color: const Color(0xFF27AE60),
+                        width: 3,
+                      ),
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF27AE60).withOpacity(0.5),
+                          blurRadius: 20,
+                          spreadRadius: 2,
                         ),
-                        child: const CircularProgressIndicator(
-                          valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF27AE60)),
-                          strokeWidth: 3,
+                      ],
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 0, sigmaY: 0),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.transparent,
+                            border: Border.all(
+                              color: Colors.white.withOpacity(0.2),
+                              width: 1,
+                            ),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Stack(
+                            children: [
+                              // Corner markers
+                              Positioned(
+                                top: 0,
+                                left: 0,
+                                child: Container(
+                                  width: 20,
+                                  height: 20,
+                                  decoration: const BoxDecoration(
+                                    border: Border(
+                                      top: BorderSide(color: Color(0xFF27AE60), width: 4),
+                                      left: BorderSide(color: Color(0xFF27AE60), width: 4),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              Positioned(
+                                top: 0,
+                                right: 0,
+                                child: Container(
+                                  width: 20,
+                                  height: 20,
+                                  decoration: const BoxDecoration(
+                                    border: Border(
+                                      top: BorderSide(color: Color(0xFF27AE60), width: 4),
+                                      right: BorderSide(color: Color(0xFF27AE60), width: 4),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              Positioned(
+                                bottom: 0,
+                                left: 0,
+                                child: Container(
+                                  width: 20,
+                                  height: 20,
+                                  decoration: const BoxDecoration(
+                                    border: Border(
+                                      bottom: BorderSide(color: Color(0xFF27AE60), width: 4),
+                                      left: BorderSide(color: Color(0xFF27AE60), width: 4),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              Positioned(
+                                bottom: 0,
+                                right: 0,
+                                child: Container(
+                                  width: 20,
+                                  height: 20,
+                                  decoration: const BoxDecoration(
+                                    border: Border(
+                                      bottom: BorderSide(color: Color(0xFF27AE60), width: 4),
+                                      right: BorderSide(color: Color(0xFF27AE60), width: 4),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              // Scanning line animation
+                              if (_isProcessingFrame)
+                                TweenAnimationBuilder<double>(
+                                  tween: Tween(begin: 0.0, end: 1.0),
+                                  duration: const Duration(milliseconds: 1500),
+                                  builder: (context, value, child) {
+                                    return Positioned(
+                                      top: value * (MediaQuery.of(context).size.height * 0.3 - 2),
+                                      left: 0,
+                                      right: 0,
+                                      child: Container(
+                                        height: 2,
+                                        decoration: BoxDecoration(
+                                          gradient: LinearGradient(
+                                            colors: [
+                                              Colors.transparent,
+                                              const Color(0xFF27AE60).withOpacity(0.8),
+                                              Colors.transparent,
+                                            ],
+                                          ),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: const Color(0xFF27AE60).withOpacity(0.5),
+                                              blurRadius: 10,
+                                              spreadRadius: 2,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                  onEnd: () {
+                                    // Loop animation
+                                    if (mounted && _isProcessingFrame) {
+                                      setState(() {});
+                                    }
+                                  },
+                                ),
+                            ],
+                          ),
                         ),
                       ),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Processing receipt...',
-                        style: TextStyle(
-                          color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : const Color(0xFF7F8C8D),
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        
+        // Overlay with instructions and detected items
+        Positioned.fill(
+          child: Container(
+            margin: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Column(
+              children: [
+                // Top bar with instructions
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.7),
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(17)),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF27AE60).withOpacity(0.3),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Icon(Icons.center_focus_strong, color: Color(0xFF27AE60), size: 18),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: const [
+                            Text(
+                              'Align items in green frame',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            Text(
+                              'AI will detect food items automatically',
+                              style: TextStyle(
+                                color: Colors.white70,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ],
                   ),
-                )
-              : _preview.isEmpty
-                  ? _buildEmptyState()
-                  : _buildItemsList(),
-        ),
-        Container(
-          margin: const EdgeInsets.only(top: 20),
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: _themeService.isDarkMode ? ThemeService.darkCardBackground : Colors.white,
-            borderRadius: const BorderRadius.only(
-              topLeft: Radius.circular(20),
-              topRight: Radius.circular(20),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(_themeService.isDarkMode ? 0.3 : 0.1),
-                blurRadius: 10,
-                offset: const Offset(0, -2),
-              ),
-            ],
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child:                   _buildActionButton(
-                      icon: Icons.photo_library_rounded,
-                      label: 'Gallery',
-                      color: _themeService.isDarkMode ? const Color(0xFFBB6BD9) : const Color(0xFF9B59B6),
-                      onPressed: _busy ? null : () => _pickAndProcess(ImageSource.gallery),
-                    ),
+                ),
+                
+                const Spacer(),
+                
+                // Bottom bar with detected items
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.8),
+                    borderRadius: const BorderRadius.vertical(bottom: Radius.circular(17)),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child:                     _buildActionButton(
-                      icon: Icons.camera_alt_rounded,
-                      label: 'Camera',
-                      color: _themeService.isDarkMode ? const Color(0xFF5DADE2) : const Color(0xFF3498DB),
-                      onPressed: _busy ? null : () => _pickAndProcess(ImageSource.camera),
-                    ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: _liveDetectedItems.isEmpty 
+                                  ? const Color(0xFF3498DB) 
+                                  : const Color(0xFF27AE60),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  _liveDetectedItems.isEmpty 
+                                      ? Icons.search_rounded 
+                                      : Icons.check_circle,
+                                  color: Colors.white,
+                                  size: 14,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  _liveDetectedItems.isEmpty 
+                                      ? 'SCANNING...' 
+                                      : '${_liveDetectedItems.length} FOUND',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const Spacer(),
+                          if (_liveDetectedItems.isNotEmpty)
+                            Text(
+                              'Tap ✓ when done',
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 11,
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
+                        ],
+                      ),
+                      if (_liveDetectedItems.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        Container(
+                          constraints: const BoxConstraints(maxHeight: 120),
+                          child: ListView.builder(
+                            shrinkWrap: true,
+                            itemCount: _liveDetectedItems.length,
+                            itemBuilder: (context, index) {
+                              final item = _liveDetectedItems[index];
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 6),
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.all(4),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF27AE60).withOpacity(0.3),
+                                        borderRadius: BorderRadius.circular(4),
+                                      ),
+                                      child: const Icon(
+                                        Icons.check,
+                                        color: Color(0xFF27AE60),
+                                        size: 12,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        '${item.name} (${item.quantity})',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ] else ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          _liveText.isNotEmpty
+                              ? 'Processing text...'
+                              : 'Point camera at food items',
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _buildActionButton(
-                      icon: _busy 
-                        ? null 
-                        : Icons.check_circle_rounded,
-                      label: _busy ? 'Saving...' : 'Save All',
-                      color: _themeService.isDarkMode ? const Color(0xFF58D68D) : const Color(0xFF27AE60),
-                      onPressed: (_preview.isEmpty || _busy) ? null : _saveAll,
-                      isLoading: _busy,
-                    ),
-                  ),
-                ],
-              ),
-              if (_preview.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                  _buildActionButton(
-                  icon: Icons.clear_all_rounded,
-                  label: 'Clear Preview',
-                  color: _themeService.isDarkMode ? const Color(0xFFFF6B6B) : const Color(0xFFE74C3C),
-                  onPressed: _busy ? null : _clearPreview,
-                  isFullWidth: true,
                 ),
               ],
-            ],
+            ),
+          ),
+        ),
+        
+        // Action buttons
+        Positioned(
+          bottom: 40,
+          left: 0,
+          right: 0,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 40),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                // Cancel button
+                Container(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE74C3C),
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFFE74C3C).withOpacity(0.5),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: IconButton(
+                    icon: const Icon(Icons.close_rounded, color: Colors.white, size: 28),
+                    onPressed: _exitCameraMode,
+                  ),
+                ),
+                
+                // Finish button
+                Container(
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF27AE60), Color(0xFF2ECC71)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF27AE60).withOpacity(0.5),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: IconButton(
+                    iconSize: 40,
+                    icon: Icon(
+                      _liveDetectedItems.isEmpty 
+                          ? Icons.hourglass_empty_rounded 
+                          : Icons.check_rounded,
+                      color: Colors.white,
+                    ),
+                    onPressed: _liveDetectedItems.isEmpty ? null : _finishLiveScanning,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ],
     );
   }
 
-  Widget _buildActionButton({
-    required IconData? icon,
-    required String label,
-    required Color color,
-    required VoidCallback? onPressed,
-    bool isLoading = false,
-    bool isFullWidth = false,
-  }) {
-    Widget button = Container(
-      height: 48,
-      decoration: BoxDecoration(
-        color: onPressed != null ? color : color.withOpacity(0.3),
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: onPressed != null ? [
-          BoxShadow(
-            color: color.withOpacity(0.3),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ] : null,
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(12),
-          onTap: onPressed,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                if (icon != null && !isLoading) ...[
-                  Icon(
-                    icon,
-                    color: Colors.white,
-                    size: 18,
-                  ),
-                  const SizedBox(width: 8),
-                ],
-                if (isLoading)
-                  const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                    ),
-                  ),
-                if (isLoading) const SizedBox(width: 8),
-                Text(
-                  label,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 14,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-
-    if (isFullWidth) {
-      return SizedBox(width: double.infinity, child: button);
-    }
-    return button;
-  }
-
-  Widget _buildEmptyState() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(32),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF27AE60), Color(0xFF2ECC71)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(24),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFF27AE60).withOpacity(0.3),
-                    blurRadius: 20,
-                    offset: const Offset(0, 8),
-                  ),
-                ],
-              ),
-              child: const Icon(
-                Icons.receipt_long_rounded,
-                size: 64,
-                color: Colors.white,
-              ),
-            ),
-            const SizedBox(height: 24),
-            Text(
-              'Ready to Scan',
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-                color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : const Color(0xFF2C3E50),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Take a photo of your receipt to automatically add items to your fridge',
-              style: TextStyle(
-                fontSize: 16,
-                color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : const Color(0xFF7F8C8D),
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildItemsList() {
     return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
       itemCount: _preview.length,
       itemBuilder: (_, i) {
         final it = _preview[i];
         final isSelected = _selectedItems.contains(i);
         
-        return Container(
-          margin: const EdgeInsets.only(bottom: 12),
-          decoration: BoxDecoration(
-            color: _themeService.isDarkMode ? ThemeService.darkCardBackground : Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            border: _isSelectionMode && isSelected 
-              ? Border.all(color: const Color(0xFF27AE60), width: 2)
-              : null,
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(_themeService.isDarkMode ? 0.2 : 0.06),
-                blurRadius: 10,
-                offset: const Offset(0, 2),
+        return Card(
+          margin: const EdgeInsets.only(bottom: 16),
+          elevation: 0,
+          color: Colors.transparent,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          child: Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: _themeService.isDarkMode 
+                    ? [ThemeService.darkCardBackground, ThemeService.darkCardBackground.withOpacity(0.8)]
+                    : [Colors.white, const Color(0xFFF8F9FA)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
               ),
-            ],
-          ),
-          child: ListTile(
-            contentPadding: const EdgeInsets.all(16),
-            leading: _isSelectionMode 
-              ? Checkbox(
-                  value: isSelected,
-                  onChanged: (_) => _toggleItemSelection(i),
-                  activeColor: const Color(0xFF27AE60),
-                )
-              : null,
-            title: Text(
-              it.name,
-              style: TextStyle(
-                fontWeight: FontWeight.w600,
-                color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : const Color(0xFF2C3E50),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: _isSelectionMode && isSelected 
+                    ? const Color(0xFF27AE60)
+                    : const Color(0xFF27AE60).withOpacity(0.2),
+                width: _isSelectionMode && isSelected ? 2 : 1.5,
               ),
-            ),
-            subtitle: Container(
-              margin: const EdgeInsets.only(top: 4),
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              decoration: BoxDecoration(
-                color: _themeService.isDarkMode 
-                    ? const Color(0xFF2C3E50).withOpacity(0.3)
-                    : const Color(0xFFE8F4FD),
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(
-                  color: _themeService.isDarkMode ? const Color(0xFF7BB3F0) : const Color(0xFF3498DB),
-                  width: 1,
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF27AE60).withOpacity(0.1),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
                 ),
-              ),
-              child: Text(
-                'Qty: ${it.quantity}',
-                style: TextStyle(
-                  color: _themeService.isDarkMode 
-                      ? const Color(0xFF7BB3F0)
-                      : const Color(0xFF3498DB),
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
+              ],
             ),
-            trailing: _isSelectionMode 
-              ? null
-              : Row(
-                  mainAxisSize: MainAxisSize.min,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(20),
+              onTap: _isSelectionMode ? () => _toggleItemSelection(i) : null,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
                   children: [
-                    Container(
-                      decoration: BoxDecoration(
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkCardBackground
-                            : const Color(0xFFF8F9FA),
-                        borderRadius: BorderRadius.circular(12),
+                    if (_isSelectionMode) ...[
+                      Checkbox(
+                        value: isSelected,
+                        onChanged: (_) => _toggleItemSelection(i),
+                        activeColor: const Color(0xFF27AE60),
                       ),
-                      child: IconButton(
-                        icon: Icon(
-                          Icons.edit_rounded,
-                          color: _themeService.isDarkMode ? const Color(0xFF7BB3F0) : const Color(0xFF4A90E2),
+                      const SizedBox(width: 12),
+                    ] else ...[
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF27AE60).withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(12),
                         ),
-                        onPressed: () => _editParsedItem(i),
+                        child: const Icon(
+                          Icons.receipt_long_rounded,
+                          color: Color(0xFF27AE60),
+                          size: 24,
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                    ],
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            it.name,
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                              color: _themeService.isDarkMode 
+                                  ? ThemeService.darkTextPrimary 
+                                  : const Color(0xFF2C3E50),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF3498DB).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: const Color(0xFF3498DB).withOpacity(0.3),
+                                width: 1,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.inventory_2_rounded,
+                                  size: 14,
+                                  color: Color(0xFF3498DB),
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'Qty: ${it.quantity}',
+                                  style: const TextStyle(
+                                    color: Color(0xFF3498DB),
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkCardBackground
-                            : const Color(0xFFF8F9FA),
-                        borderRadius: BorderRadius.circular(12),
+                    if (!_isSelectionMode)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF3498DB).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: IconButton(
+                              icon: const Icon(
+                                Icons.edit_rounded,
+                                color: Color(0xFF3498DB),
+                                size: 20,
+                              ),
+                              onPressed: () => _editParsedItem(i),
+                              tooltip: 'Edit',
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFE74C3C).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: IconButton(
+                              icon: const Icon(
+                                Icons.delete_rounded,
+                                color: Color(0xFFE74C3C),
+                                size: 20,
+                              ),
+                              onPressed: () => _deleteParsedItem(i),
+                              tooltip: 'Delete',
+                            ),
+                          ),
+                        ],
                       ),
-                      child: IconButton(
-                        icon: Icon(
-                          Icons.delete_rounded,
-                          color: _themeService.isDarkMode ? const Color(0xFFE57373) : const Color(0xFFE74C3C),
-                        ),
-                        onPressed: () => _deleteParsedItem(i),
-                      ),
-                    ),
                   ],
                 ),
-            onTap: _isSelectionMode ? () => _toggleItemSelection(i) : null,
+              ),
+            ),
           ),
         );
       },
