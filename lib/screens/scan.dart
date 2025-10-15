@@ -954,7 +954,16 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
         if (_preview.isNotEmpty) 
           Container(
             margin: const EdgeInsets.only(top: 8),
-            padding: const EdgeInsets.all(20),
+            padding: EdgeInsets.only(
+              left: 20,
+              right: 20,
+              top: 20,
+              bottom: Platform.isAndroid 
+                  ? MediaQuery.of(context).viewPadding.bottom > 0 
+                      ? MediaQuery.of(context).viewPadding.bottom + 8.0  // Add extra padding if there's a navigation bar
+                      : 20.0
+                  : 20.0,
+            ),
             decoration: BoxDecoration(
               color: _themeService.isDarkMode ? ThemeService.darkCardBackground : Colors.white,
               borderRadius: const BorderRadius.only(
