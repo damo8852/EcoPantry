@@ -1395,19 +1395,26 @@ class _HomePageState extends State<HomePage> {
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                         decoration: BoxDecoration(
-                          color: _themeService.isDarkMode 
-                              ? ThemeService.darkCardBackground 
-                              : Colors.white,
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF9B59B6), Color(0xFF8E44AD)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
                           borderRadius: BorderRadius.circular(8),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFF9B59B6).withOpacity(0.3),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
                         ),
-                        child: Text(
+                        child: const Text(
                           'Scan Receipt',
                           style: TextStyle(
-                            color: _themeService.isDarkMode 
-                                ? ThemeService.darkTextPrimary 
-                                : ThemeService.lightTextPrimary,
+                            color: Colors.white,
                             fontSize: 14,
-                            fontWeight: FontWeight.w500,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
                       ),
@@ -1439,7 +1446,7 @@ class _HomePageState extends State<HomePage> {
                           backgroundColor: Colors.transparent,
                           elevation: 0,
                           heroTag: "scan_fab",
-                          child: const Icon(Icons.qr_code_scanner_rounded, color: Colors.white),
+                          child: const Icon(Icons.receipt_long_rounded, color: Colors.white),
                         ),
                       ),
                     ],
@@ -1463,19 +1470,26 @@ class _HomePageState extends State<HomePage> {
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                         decoration: BoxDecoration(
-                          color: _themeService.isDarkMode 
-                              ? ThemeService.darkCardBackground 
-                              : Colors.white,
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF3498DB), Color(0xFF2980B9)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
                           borderRadius: BorderRadius.circular(8),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFF3498DB).withOpacity(0.3),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
                         ),
-                        child: Text(
+                        child: const Text(
                           'Manual Input',
                           style: TextStyle(
-                            color: _themeService.isDarkMode 
-                                ? ThemeService.darkTextPrimary 
-                                : ThemeService.lightTextPrimary,
+                            color: Colors.white,
                             fontSize: 14,
-                            fontWeight: FontWeight.w500,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
                       ),

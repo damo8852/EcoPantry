@@ -101,19 +101,28 @@ class ReceiptParser {
   }
 
   static String _buildExtractionPrompt(String receiptText) {
-    return '''Extract food items from receipt. Clean names (remove brands), expand abbreviations, avoid duplicates.
+    return '''Extract ONLY food/grocery items from this receipt. Ignore non-food items, prices, taxes, totals, and store info.
+
+RULES:
+1. Clean item names: Remove brands, weights, sizes, and store names
+2. Expand abbreviations (chkn → chicken, bf → beef)
+3. Combine duplicate items
+4. Skip non-food items (bags, household, pharmacy, etc.)
+5. Parse quantities carefully (look for "2x", "3@", or leading numbers)
 
 Types: meat, poultry, seafood, vegetable, fruit, dairy, grain, beverage, snack, condiment, frozen, other
 
 Examples:
 - "Heritage Farm Chicken Thighs 1 lb" → {"name": "chicken thighs", "quantity": 1, "type": "poultry"}
 - "2x Kroger Green Grapes" → {"name": "green grapes", "quantity": 2, "type": "fruit"}
-- "chkn thgh" → {"name": "chicken thigh", "quantity": 1, "type": "poultry"}
+- "chkn thgh" → {"name": "chicken thighs", "quantity": 1, "type": "poultry"}
+- "3@ Organic Avocados" → {"name": "avocados", "quantity": 3, "type": "fruit"}
+- "SF SILKEN TOFU" → {"name": "silken tofu", "quantity": 1, "type": "other"}
 
-Receipt:
+Receipt Text:
 $receiptText
 
-JSON format: {"items": [{"name": "...", "quantity": 1, "type": "..."}]}''';
+Return JSON only: {"items": [{"name": "...", "quantity": 1, "type": "..."}]}''';
   }
 
   static Future<String?> _callOpenAI(String prompt, {bool useJsonMode = false}) async {
