@@ -24,7 +24,7 @@ Future<void> main() async {
 
   // Local notifications
   await NotificationsService.instance.init(); // creates channel, requests permissions on iOS/Android 13+
-s
+
   // Initialize theme service
   await ThemeService().init();
 

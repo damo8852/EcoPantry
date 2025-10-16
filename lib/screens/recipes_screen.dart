@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/recipe.dart';
 import '../services/theme_service.dart';
+import '../utils/hybrid_ingredient_parser.dart';
 
 class RecipesScreen extends StatefulWidget {
   final List<Recipe> recipes;
@@ -97,6 +98,92 @@ class _RecipesScreenState extends State<RecipesScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Failed to save recipe: ${e.toString()}'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _addToShoppingList(String ingredient) async {
+    try {
+      // Check if user is authenticated
+      if (!mounted) {
+        return;
+      }
+      
+      // Get current user safely
+      final currentUser = _auth.currentUser;
+      if (currentUser == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Please sign in to add items to your shopping list'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        return;
+      }
+
+      // Use the hybrid ingredient parser (rule-based + AI fallback)
+      final cleanIngredient = await HybridIngredientParser.parseIngredient(ingredient);
+
+      // Final validation - ensure we have a valid ingredient name
+      if (cleanIngredient.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Could not add item to shopping list: Invalid ingredient name'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        return;
+      }
+
+      print('Adding to shopping list - Original: "$ingredient" -> Cleaned: "$cleanIngredient"');
+
+      // Check if item already exists in shopping list
+      final existingQuery = await _db
+          .collection('users')
+          .doc(currentUser.uid)
+          .collection('shopping_list')
+          .where('name', isEqualTo: cleanIngredient)
+          .where('isCompleted', isEqualTo: false)
+          .get();
+
+      if (existingQuery.docs.isNotEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('"$cleanIngredient" is already in your shopping list'),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+        return;
+      }
+
+      await _db.collection('users').doc(currentUser.uid).collection('shopping_list').add({
+        'name': cleanIngredient,
+        'isCompleted': false,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Added "$cleanIngredient" to shopping list'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to add to shopping list: ${e.toString()}'),
             backgroundColor: Theme.of(context).colorScheme.error,
           ),
         );
@@ -413,70 +500,201 @@ class _RecipesScreenState extends State<RecipesScreen> {
                       ],
                     ),
                     const SizedBox(height: 16),
-                    // Available ingredients section with modern styling
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(6),
-                          decoration: BoxDecoration(
-                            color: Colors.green.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: const Icon(
-                            Icons.check_circle,
-                            size: 18,
-                            color: Colors.green,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          'From Your Fridge',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 15,
-                            color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : Colors.green,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    ...recipe.ingredients.take(3).map((ingredient) => Padding(
-                          padding: const EdgeInsets.only(bottom: 8),
-                          child: Row(
+                    // Filter ingredients based on what's available
+                    ...() {
+                      // Get ingredients from fridge (match against usedIngredients)
+                      final fridgeIngredients = recipe.ingredients.where((ingredient) {
+                        final ingredientLower = ingredient.toLowerCase();
+                        return widget.usedIngredients.any((used) => 
+                          ingredientLower.contains(used.toLowerCase()) || 
+                          used.toLowerCase().contains(ingredientLower.split(' ').last)
+                        );
+                      }).toList();
+
+                      // Get ingredients that need to be bought (not in fridge, not basic pantry staples)
+                      final basicPantryStaples = ['salt', 'pepper', 'oil', 'butter', 'water', 'sugar', 'flour'];
+                      final toBuyIngredients = recipe.ingredients.where((ingredient) {
+                        final ingredientLower = ingredient.toLowerCase();
+                        // Skip if it's a basic pantry staple
+                        if (basicPantryStaples.any((staple) => ingredientLower.contains(staple))) {
+                          return false;
+                        }
+                        // Include if NOT in fridge
+                        return !widget.usedIngredients.any((used) => 
+                          ingredientLower.contains(used.toLowerCase()) || 
+                          used.toLowerCase().contains(ingredientLower.split(' ').last)
+                        );
+                      }).toList();
+
+                      return [
+                        // From Your Fridge section
+                        if (fridgeIngredients.isNotEmpty) ...[
+                          Row(
                             children: [
                               Container(
-                                width: 6,
-                                height: 6,
-                                decoration: const BoxDecoration(
+                                padding: const EdgeInsets.all(6),
+                                decoration: BoxDecoration(
+                                  color: Colors.green.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Icon(
+                                  Icons.check_circle,
+                                  size: 18,
                                   color: Colors.green,
-                                  shape: BoxShape.circle,
                                 ),
                               ),
-                              const SizedBox(width: 12),
-                              Expanded(
+                              const SizedBox(width: 8),
+                              Text(
+                                'From Your Fridge',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 15,
+                                  color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : Colors.green,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: Colors.green.withOpacity(0.15),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
                                 child: Text(
-                                  ingredient,
-                                  style: TextStyle(
-                                    color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : Colors.black87,
-                                    fontSize: 14,
+                                  '${fridgeIngredients.length}',
+                                  style: const TextStyle(
+                                    color: Colors.green,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12,
                                   ),
                                 ),
                               ),
                             ],
                           ),
-                        )),
-                    if (recipe.ingredients.length > 3)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Text(
-                          '+ ${recipe.ingredients.length - 3} more ingredients',
-                          style: TextStyle(
-                            color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : Colors.green,
-                            fontStyle: FontStyle.italic,
-                            fontSize: 13,
+                          const SizedBox(height: 12),
+                          ...fridgeIngredients.take(3).map((ingredient) => Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.check_circle, size: 16, color: Colors.green),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Text(
+                                        ingredient,
+                                        style: TextStyle(
+                                          color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : Colors.black87,
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              )),
+                          if (fridgeIngredients.length > 3)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4, bottom: 12),
+                              child: Text(
+                                '+ ${fridgeIngredients.length - 3} more from fridge',
+                                style: TextStyle(
+                                  color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : Colors.green,
+                                  fontStyle: FontStyle.italic,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                        ],
+
+                        // Need to Buy section
+                        if (toBuyIngredients.isNotEmpty) ...[
+                          const SizedBox(height: 16),
+                          Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(6),
+                                decoration: BoxDecoration(
+                                  color: Colors.orange.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Icon(
+                                  Icons.shopping_cart,
+                                  size: 18,
+                                  color: Colors.orange,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                'Need to Buy',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 15,
+                                  color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : Colors.orange,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: Colors.orange.withOpacity(0.15),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Text(
+                                  '${toBuyIngredients.length}',
+                                  style: const TextStyle(
+                                    color: Colors.orange,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
-                        ),
-                      ),
+                          const SizedBox(height: 12),
+                          ...toBuyIngredients.take(3).map((ingredient) => Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.add_shopping_cart, size: 16, color: Colors.orange),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Text(
+                                        ingredient,
+                                        style: TextStyle(
+                                          color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : Colors.black87,
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                    ),
+                                    IconButton(
+                                      icon: Icon(
+                                        Icons.add_shopping_cart,
+                                        size: 16,
+                                        color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : Colors.grey[600],
+                                      ),
+                                      onPressed: () => _addToShoppingList(ingredient),
+                                      tooltip: 'Add to shopping list',
+                                      padding: EdgeInsets.zero,
+                                      constraints: const BoxConstraints(
+                                        minWidth: 28,
+                                        minHeight: 28,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              )),
+                          if (toBuyIngredients.length > 3)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Text(
+                                '+ ${toBuyIngredients.length - 3} more to buy',
+                                style: TextStyle(
+                                  color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : Colors.orange,
+                                  fontStyle: FontStyle.italic,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ];
+                    }(),
                     
                     // Shopping list section
                     if (recipe.shoppingList.isNotEmpty) ...[
@@ -656,6 +874,21 @@ class _RecipesScreenState extends State<RecipesScreen> {
                           child: Text(
                             ingredient,
                             style: Theme.of(context).textTheme.bodyLarge,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          icon: Icon(
+                            Icons.add_shopping_cart,
+                            size: 20,
+                            color: Theme.of(context).colorScheme.secondary,
+                          ),
+                          onPressed: () => _addToShoppingList(ingredient),
+                          tooltip: 'Add to shopping list',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 32,
+                            minHeight: 32,
                           ),
                         ),
                       ],

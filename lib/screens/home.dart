@@ -16,6 +16,7 @@ import 'recipes_hub_screen.dart';
 import 'collections_screen.dart';
 import 'auth_gate.dart';
 import 'grocery_stores_screen.dart';
+import 'shopping_list_hub_screen.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -1375,6 +1376,21 @@ class _HomePageState extends State<HomePage> {
                       Navigator.push(
                         context,
                         MaterialPageRoute(builder: (_) => const RecipesHubScreen()),
+                      );
+                    },
+                  ),
+                  
+                  // Shopping List
+                  _buildDrawerItem(
+                    icon: Icons.shopping_cart_rounded,
+                    title: 'Shopping List',
+                    subtitle: 'Manage your shopping list & find recipes',
+                    iconColor: const Color(0xFF3498DB),
+                    onTap: () {
+                      Navigator.pop(context);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const ShoppingListHubScreen()),
                       );
                     },
                   ),
