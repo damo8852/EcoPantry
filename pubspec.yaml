@@ -116,9 +116,9 @@ flutter:
 flutter_launcher_icons:
   android: "launcher_icon"
   ios: true
-  image_path: "assets/icon/ecopantry_logo.png"
+  image_path: "assets/icon/Inverted_Logo.png"
   web:
     generate: true
-    image_path: "assets/icon/ecopantry_logo.png"
-    background_color: "#27AE60"
+    image_path: "assets/icon/Inverted_Logo.png"
+    background_color: "#FFFFFF"
     theme_color: "#27AE60"

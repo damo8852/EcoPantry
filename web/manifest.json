@@ -3,7 +3,7 @@
     "short_name": "EcoPantry",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#27AE60",
+    "background_color": "#FFFFFF",
     "theme_color": "#27AE60",
     "description": "EcoPantry - Reduce waste. Save money. Eat fresher.",
     "orientation": "portrait-primary",

@@ -37,12 +37,9 @@ class AuthService {
 
         final googleAuth = await googleUser.authentication;
 
-        // Debug output: print tokens so you can verify what's returned.
-        // Remove or guard these prints in production.
-        // ignore: avoid_print
-        print('Google accessToken: ${googleAuth.accessToken}');
-        // ignore: avoid_print
-        print('Google idToken: ${googleAuth.idToken}');
+        // Security: Token logging removed to prevent credential exposure
+        // For debugging in development, use conditional logging:
+        // if (kDebugMode) { print('Google auth tokens retrieved'); }
 
         if (googleAuth.accessToken == null || googleAuth.idToken == null) {
           throw Exception('Missing Google authentication tokens.');
@@ -90,7 +87,7 @@ class AuthService {
     );
     final googleUser = await googleSignIn.signIn();
     final googleAuth = await googleUser?.authentication;
-    
+
     if (googleAuth == null) throw Exception("Google auth failed");
 
     final credential = GoogleAuthProvider.credential(

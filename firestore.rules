@@ -3,9 +3,22 @@ service cloud.firestore {
   match /databases/{db}/documents {
     function isAuthed() { return request.auth != null; }
     function isOwner(uid) { return request.auth.uid == uid; }
-    function isNotGuest() { 
-      return request.auth != null && 
+    function isNotGuest() {
+      return request.auth != null &&
              request.auth.token.firebase.sign_in_provider != 'anonymous';
+    }
+
+    // Security: Validate string lengths to prevent abuse
+    function isValidString(str, maxLen) {
+      return str is string && str.size() <= maxLen && str.size() > 0;
+    }
+
+    // Security: Validate recipe data
+    function isValidRecipeData(data) {
+      return isValidString(data.name, 200) &&
+             isValidString(data.description, 2000) &&
+             data.ingredients is list && data.ingredients.size() <= 100 &&
+             data.instructions is list && data.instructions.size() <= 100;
     }
 
     // Allow authenticated users to read config documents
@@ -37,23 +50,35 @@ service cloud.firestore {
     // Community recipes - read for all authenticated, create/update for non-guest users
     match /community_recipes/{recipeId} {
       allow read: if isAuthed();
-      allow create: if isNotGuest();
-      allow update: if isAuthed(); // Allow for incrementing saves/ratings
-      allow delete: if isAuthed() && 
-                       (resource.data.authorId == request.auth.uid || 
+      allow create: if isNotGuest() && isValidRecipeData(request.resource.data);
+
+      // Security: Restrict updates to specific fields only
+      allow update: if isAuthed() && (
+        // Allow author to update their own recipe
+        (resource.data.authorId == request.auth.uid && isValidRecipeData(request.resource.data)) ||
+        // Allow incrementing saves counter only
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['saves']) &&
+         request.resource.data.saves == resource.data.saves + 1)
+      );
+
+      allow delete: if isAuthed() &&
+                       (resource.data.authorId == request.auth.uid ||
                         request.auth.token.email_verified == true);
 
       // Ratings subcollection
       match /ratings/{userId} {
         allow read: if isAuthed();
-        allow write: if isNotGuest() && isOwner(userId);
+        allow write: if isNotGuest() && isOwner(userId) &&
+                        request.resource.data.rating >= 1 &&
+                        request.resource.data.rating <= 5;
       }
 
       // Comments subcollection
       match /comments/{commentId} {
         allow read: if isAuthed();
-        allow create: if isNotGuest();
-        allow update, delete: if isNotGuest() && 
+        allow create: if isNotGuest() &&
+                         isValidString(request.resource.data.text, 1000);
+        allow update, delete: if isNotGuest() &&
                                   resource.data.userId == request.auth.uid;
       }
     }
