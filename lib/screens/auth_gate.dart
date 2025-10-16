@@ -122,6 +122,16 @@ class _LoginScreenState extends State<_LoginScreen> with SingleTickerProviderSta
     if (mounted) setState(() => _busy = false);
   }
 
+  Future<void> _signInAsGuest() async {
+    setState(() { _busy = true; _err = null; });
+    try {
+      await AuthService.instance.signInAnonymously();
+    } catch (e) {
+      if (mounted) setState(() => _err = e.toString().replaceFirst('Exception: ', ''));
+    }
+    if (mounted) setState(() => _busy = false);
+  }
+
 
   Future<void> _resetPassword() async {
     final email = _emailController.text.trim();
@@ -692,6 +702,38 @@ class _LoginScreenState extends State<_LoginScreen> with SingleTickerProviderSta
                 fontSize: 13,
                 letterSpacing: 0.3,
               ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // Guest Login
+        SizedBox(
+          height: 40,
+          width: double.infinity,
+          child: OutlinedButton(
+            onPressed: _busy ? null : _signInAsGuest,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFF10B981),
+              side: const BorderSide(color: Color(0xFF10B981), width: 1.5),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.person_outline, size: 18),
+                SizedBox(width: 8),
+                Text(
+                  'Continue as Guest',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                    letterSpacing: 0.3,
+                  ),
+                ),
+              ],
             ),
           ),
         ),
