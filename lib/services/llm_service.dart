@@ -208,6 +208,7 @@ $itemName$context ->''';
     String? keyword,
     String? cookingTool,
     bool strictMode = false,
+    List<String>? dietPreferences,
   }) async {
     if (ingredients.isEmpty) {
       return [];
@@ -225,6 +226,7 @@ $itemName$context ->''';
         keyword,
         cookingTool,
         strictMode,
+        dietPreferences,
       );
       final response = await _callOpenAIForRecipes(prompt);
 
@@ -250,6 +252,7 @@ $itemName$context ->''';
     String? keyword,
     String? cookingTool,
     bool strictMode,
+    List<String>? dietPreferences,
   ) {
     // Handle empty fridge case
     if (ingredients.isEmpty) {
@@ -378,12 +381,54 @@ JSON format:
       }
     }
     
+    // Build diet preferences instruction
+    String dietPreferencesInstruction = '';
+    if (dietPreferences != null && dietPreferences.isNotEmpty) {
+      final preferencesList = dietPreferences.map((pref) {
+        switch (pref) {
+          case 'vegan':
+            return 'Vegan (no animal products including meat, dairy, eggs, honey)';
+          case 'vegetarian':
+            return 'Vegetarian (no meat, but dairy and eggs allowed)';
+          case 'pescatarian':
+            return 'Pescatarian (no meat but fish and seafood allowed)';
+          case 'gluten_free':
+            return 'Gluten-free (no wheat, barley, rye)';
+          case 'dairy_free':
+            return 'Dairy-free (no milk, cheese, butter)';
+          case 'nut_free':
+            return 'Nut-free (no tree nuts or peanuts)';
+          case 'shellfish_free':
+            return 'Shellfish-free (no shellfish)';
+          case 'egg_free':
+            return 'Egg-free (no eggs)';
+          case 'sugar_free':
+            return 'Sugar-free (no added sugars)';
+          case 'low_sodium':
+            return 'Low-sodium (minimal salt)';
+          case 'keto':
+            return 'Keto (low-carb, high-fat)';
+          case 'paleo':
+            return 'Paleo (no grains, legumes, dairy)';
+          case 'spicy':
+            return 'Spicy food preferred';
+          case 'organic':
+            return 'Organic ingredients preferred';
+          case 'quick_meals':
+            return 'Quick meal preparation (30 minutes or less)';
+          default:
+            return pref;
+        }
+      }).join(', ');
+      dietPreferencesInstruction = '\n\nDIETARY REQUIREMENTS: The user follows these dietary preferences and restrictions: $preferencesList. ALL recipes MUST comply with these requirements. Do not suggest ingredients or recipes that violate these dietary preferences.';
+    }
+    
     // Pantry staples based on strict mode
     final pantryStaples = strictMode 
         ? 'salt, pepper, oil (STRICT MODE: NO OTHER PANTRY STAPLES ALLOWED)'
         : 'salt, pepper, oil, butter, garlic, onions, flour, sugar, vinegar, soy sauce';
     
-    return '''Create $count recipes using: $ingredientsList$keywordInstruction$modeInstruction$cuisineInstruction$cookingToolInstruction$categoryInstruction$priorityInstruction$prioritizedItemsInstruction
+    return '''Create $count recipes using: $ingredientsList$keywordInstruction$modeInstruction$cuisineInstruction$cookingToolInstruction$categoryInstruction$priorityInstruction$prioritizedItemsInstruction$dietPreferencesInstruction
 
 Pantry staples available: $pantryStaples
 

@@ -28,6 +28,10 @@ service cloud.firestore {
       match /saved_recipes/{recipeId} {
         allow read, write: if isAuthed() && isOwner(uid);
       }
+
+      match /connected_stores/{storeId} {
+        allow read, write: if isAuthed() && isOwner(uid);
+      }
     }
 
     // Community recipes - read for all authenticated, create/update for non-guest users

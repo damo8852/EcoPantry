@@ -396,7 +396,7 @@ class _LoginScreenState extends State<_LoginScreen> with SingleTickerProviderSta
         _buildTextField(isDark,
           controller: _emailController,
           label: 'Email',
-          hint: 'demo@email.com',
+          hint: 'Enter your email here',
           icon: Icons.email_outlined,
           keyboardType: TextInputType.emailAddress,
           validator: (value) {

@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -232,7 +233,12 @@ class _RecipesHubScreenState extends State<RecipesHubScreen> {
                 
                 // Action buttons
                 Container(
-                  padding: const EdgeInsets.all(24),
+                  padding: EdgeInsets.fromLTRB(
+                    24,
+                    24,
+                    24,
+                    24 + (Platform.isAndroid ? MediaQuery.of(context).viewPadding.bottom : 0),
+                  ),
                   decoration: BoxDecoration(
                     color: _themeService.isDarkMode ? ThemeService.darkBackground : Colors.grey[50],
                     borderRadius: const BorderRadius.vertical(bottom: Radius.circular(24)),
@@ -336,6 +342,21 @@ class _RecipesHubScreenState extends State<RecipesHubScreen> {
           .where((name) => name.isNotEmpty)
           .toList();
 
+      // Get user's diet preferences
+      List<String> dietPreferences = [];
+      try {
+        final userDoc = await db.collection('users').doc(user.uid).get();
+        if (userDoc.exists) {
+          final userData = userDoc.data() as Map<String, dynamic>;
+          final preferences = userData['dietPreferences'] as List<dynamic>?;
+          if (preferences != null) {
+            dietPreferences = preferences.cast<String>();
+          }
+        }
+      } catch (e) {
+        print('Error loading diet preferences: $e');
+      }
+
       // Generate recipes
       final recipeData = await LLMService().generateRecipes(
         ingredients,
@@ -345,6 +366,7 @@ class _RecipesHubScreenState extends State<RecipesHubScreen> {
         keyword: keyword != null && keyword.trim().isNotEmpty ? keyword : null,
         cookingTool: selectedCookingTool != null && selectedCookingTool != 'any' ? selectedCookingTool : null,
         strictMode: isStrictMode,
+        dietPreferences: dietPreferences.isNotEmpty ? dietPreferences : null,
       );
 
       if (!mounted) return;

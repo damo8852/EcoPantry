@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -176,7 +177,12 @@ class _SavedRecipesScreenState extends State<SavedRecipesScreen> {
 
               // Action buttons
               Container(
-                padding: const EdgeInsets.all(20),
+                padding: EdgeInsets.fromLTRB(
+                  20,
+                  20,
+                  20,
+                  20 + (Platform.isAndroid ? MediaQuery.of(context).viewPadding.bottom : 0),
+                ),
                 decoration: BoxDecoration(
                   color: _themeService.isDarkMode ? ThemeService.darkBackground : Colors.grey[50],
                   border: Border(top: BorderSide(color: Colors.grey[300]!)),

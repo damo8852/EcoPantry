@@ -15,6 +15,7 @@ import 'scan.dart';
 import 'recipes_hub_screen.dart';
 import 'collections_screen.dart';
 import 'auth_gate.dart';
+import 'grocery_stores_screen.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -363,6 +364,61 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  void _unfreezeSelectedItems() async {
+    if (_selectedItems.isEmpty) return;
+    
+    final batch = _db.batch();
+    final user = _auth.currentUser!;
+    
+    for (final itemId in _selectedItems) {
+      final docRef = _db.collection('users').doc(user.uid).collection('items').doc(itemId);
+      final docSnapshot = await docRef.get();
+      if (docSnapshot.exists) {
+        final data = docSnapshot.data() as Map<String, dynamic>;
+        // Restore original expiry date when unfreezing, or keep current if no original stored
+        final updates = <String, dynamic>{
+          'isFrozen': false,
+          'unfrozenAt': FieldValue.serverTimestamp(),
+        };
+        
+        // If there's an original expiry date stored, restore it
+        if (data['originalExpiryDate'] != null) {
+          updates['expiryDate'] = data['originalExpiryDate'];
+          updates['originalExpiryDate'] = FieldValue.delete(); // Remove the stored original date
+        }
+        
+        batch.update(docRef, updates);
+      }
+    }
+    
+    try {
+      await batch.commit();
+      final unfrozenCount = _selectedItems.length;
+      setState(() {
+        _selectedItems.clear();
+        _isSelectionMode = false;
+        _isMultiSelectMode = false;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Unfroze $unfrozenCount items'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to unfreeze items: ${e.toString()}'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    }
+  }
+
   void _selectAllVisibleItems() {
     // This will be called from the app bar, but we need access to the current docs
     // We'll use a different approach - store the current docs in a variable
@@ -379,6 +435,85 @@ class _HomePageState extends State<HomePage> {
 
   int _getCurrentItemsCount() {
     return _currentSortedDocs?.length ?? 0;
+  }
+
+  bool _hasFrozenSelectedItems() {
+    if (_selectedItems.isEmpty || _currentSortedDocs == null) return false;
+    
+    for (final doc in _currentSortedDocs!) {
+      if (_selectedItems.contains(doc.id)) {
+        final data = doc.data();
+        if (data['isFrozen'] == true) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  void _freezeItem(DocumentReference<Map<String, dynamic>> ref, Map<String, dynamic> data) async {
+    try {
+      // Store the original expiry date when freezing
+      await ref.update({
+        'isFrozen': true,
+        'frozenAt': FieldValue.serverTimestamp(),
+        'originalExpiryDate': data['expiryDate'], // Store original expiry date
+      });
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Froze "${(data['name'] ?? 'Unknown').toString()}"'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to freeze item: ${e.toString()}'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    }
+  }
+
+  void _unfreezeItem(DocumentReference<Map<String, dynamic>> ref, Map<String, dynamic> data) async {
+    try {
+      // Restore original expiry date when unfreezing, or keep current if no original stored
+      final updates = <String, dynamic>{
+        'isFrozen': false,
+        'unfrozenAt': FieldValue.serverTimestamp(),
+      };
+      
+      // If there's an original expiry date stored, restore it
+      if (data['originalExpiryDate'] != null) {
+        updates['expiryDate'] = data['originalExpiryDate'];
+        updates['originalExpiryDate'] = FieldValue.delete(); // Remove the stored original date
+      }
+      
+      await ref.update(updates);
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Unfroze "${(data['name'] ?? 'Unknown').toString()}"'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to unfreeze item: ${e.toString()}'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    }
   }
 
   // Store current sorted docs for select all functionality
@@ -1063,6 +1198,22 @@ class _HomePageState extends State<HomePage> {
                 ),
               ),
               PopupMenuItem(
+                value: 'unfreeze',
+                enabled: _selectedItems.isNotEmpty && _hasFrozenSelectedItems(),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.whatshot_rounded,
+                      color: (_selectedItems.isEmpty || !_hasFrozenSelectedItems())
+                          ? (_themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary)
+                          : (_themeService.isDarkMode ? const Color(0xFF7BB3F0) : const Color(0xFF00BCD4)),
+                    ),
+                    const SizedBox(width: 12),
+                    Text('Unfreeze Selected'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
                 value: 'delete',
                 enabled: _selectedItems.isNotEmpty,
                 child: Row(
@@ -1092,6 +1243,9 @@ class _HomePageState extends State<HomePage> {
                   break;
                 case 'freeze':
                   _freezeSelectedItems();
+                  break;
+                case 'unfreeze':
+                  _unfreezeSelectedItems();
                   break;
                 case 'delete':
                   _deleteSelectedItems();
@@ -1447,6 +1601,81 @@ class _HomePageState extends State<HomePage> {
                           elevation: 0,
                           heroTag: "scan_fab",
                           child: const Icon(Icons.receipt_long_rounded, color: Colors.white),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            // Kroger Integration button
+            AnimatedScale(
+              scale: _isFabMenuOpen ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+              child: AnimatedOpacity(
+                opacity: _isFabMenuOpen ? 1.0 : 0.0,
+                duration: const Duration(milliseconds: 200),
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 12.0),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF27AE60), Color(0xFF229954)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(8),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFF27AE60).withOpacity(0.3),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: const Text(
+                          'Grocery Stores',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Container(
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF27AE60), Color(0xFF229954)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(30),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFF27AE60).withOpacity(0.4),
+                              blurRadius: 12,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: FloatingActionButton(
+                          onPressed: () {
+                            setState(() => _isFabMenuOpen = false);
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (_) => const GroceryStoresScreen()),
+                            );
+                          },
+                          backgroundColor: Colors.transparent,
+                          elevation: 0,
+                          heroTag: "grocery_stores_fab",
+                          child: const Icon(Icons.store_rounded, color: Colors.white),
                         ),
                       ),
                     ],
@@ -1975,6 +2204,8 @@ class _HomePageState extends State<HomePage> {
                                   },
                                   onPrioritize: () => _prioritizeItem(ref, data),
                                   onUnprioritize: () => _unprioritizeItem(ref, data),
+                                  onFreeze: () => _freezeItem(ref, data),
+                                  onUnfreeze: () => _unfreezeItem(ref, data),
                                   isPrioritized: data['isPrioritized'] == true,
                                   onSelectionChanged: (selected) {
                                     if (selected) {

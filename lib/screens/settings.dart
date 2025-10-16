@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/theme_service.dart';
 import '../services/auth.dart';
 
@@ -11,14 +13,21 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   final ThemeService _themeService = ThemeService();
+  final _auth = FirebaseAuth.instance;
+  final _db = FirebaseFirestore.instance;
+  
   bool _isDarkMode = false;
   bool _isCompactView = false;
   bool _useLbs = true;
+  
+  // Diet preferences
+  Set<String> _selectedDietPreferences = {};
 
   @override
   void initState() {
     super.initState();
     _loadSettings();
+    _loadDietPreferences();
   }
 
   void _loadSettings() {
@@ -48,6 +57,75 @@ class _SettingsPageState extends State<SettingsPage> {
       _useLbs = value;
     });
     _themeService.toggleCarbonUnit();
+  }
+
+  Future<void> _loadDietPreferences() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    try {
+      final doc = await _db.collection('users').doc(user.uid).get();
+      if (doc.exists) {
+        final data = doc.data() as Map<String, dynamic>;
+        final preferences = data['dietPreferences'] as List<dynamic>? ?? [];
+        setState(() {
+          _selectedDietPreferences = preferences.cast<String>().toSet();
+        });
+      }
+    } catch (e) {
+      print('Error loading diet preferences: $e');
+    }
+  }
+
+  Future<void> _saveDietPreferences() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    try {
+      await _db.collection('users').doc(user.uid).set({
+        'dietPreferences': _selectedDietPreferences.toList(),
+      }, SetOptions(merge: true));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to save diet preferences: ${e.toString()}'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    }
+  }
+
+  void _toggleDietPreference(String preference) {
+    setState(() {
+      if (_selectedDietPreferences.contains(preference)) {
+        _selectedDietPreferences.remove(preference);
+      } else {
+        _selectedDietPreferences.add(preference);
+      }
+    });
+    _saveDietPreferences();
+  }
+
+  List<Map<String, String>> _getDietPreferenceOptions() {
+    return [
+      {'label': '🌱 Vegan', 'value': 'vegan'},
+      {'label': '🥛 Vegetarian', 'value': 'vegetarian'},
+      {'label': '🥩 Pescatarian', 'value': 'pescatarian'},
+      {'label': '🌾 Gluten-Free', 'value': 'gluten_free'},
+      {'label': '🥛 Dairy-Free', 'value': 'dairy_free'},
+      {'label': '🥜 Nut-Free', 'value': 'nut_free'},
+      {'label': '🦐 Shellfish-Free', 'value': 'shellfish_free'},
+      {'label': '🥚 Egg-Free', 'value': 'egg_free'},
+      {'label': '🍯 Sugar-Free', 'value': 'sugar_free'},
+      {'label': '🧂 Low-Sodium', 'value': 'low_sodium'},
+      {'label': '🫒 Keto', 'value': 'keto'},
+      {'label': '🥬 Paleo', 'value': 'paleo'},
+      {'label': '🌶️ Spicy Food', 'value': 'spicy'},
+      {'label': '🍃 Organic', 'value': 'organic'},
+      {'label': '⚡ Quick Meals', 'value': 'quick_meals'},
+    ];
   }
 
   Future<void> _logout() async {
@@ -242,6 +320,70 @@ class _SettingsPageState extends State<SettingsPage> {
                     activeColor: ThemeService.primaryColor,
                     contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     dense: true,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          
+          const SizedBox(height: 16),
+          
+          // Diet Preferences Section
+          Card(
+            color: _themeService.isDarkMode 
+                ? ThemeService.darkCard 
+                : ThemeService.lightCard,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Diet Preferences',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: _themeService.isDarkMode 
+                          ? ThemeService.darkTextPrimary 
+                          : ThemeService.lightTextPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Select your dietary preferences to get better recipe recommendations',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: _themeService.isDarkMode 
+                          ? ThemeService.darkTextSecondary 
+                          : ThemeService.lightTextSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: _getDietPreferenceOptions().map((option) {
+                      final value = option['value']!;
+                      final label = option['label']!;
+                      final isSelected = _selectedDietPreferences.contains(value);
+                      return FilterChip(
+                        label: Text(label),
+                        selected: isSelected,
+                        onSelected: (selected) => _toggleDietPreference(value),
+                        selectedColor: ThemeService.primaryColor.withOpacity(0.2),
+                        checkmarkColor: ThemeService.primaryColor,
+                        backgroundColor: _themeService.isDarkMode 
+                            ? ThemeService.darkBackground 
+                            : Colors.grey[100],
+                        labelStyle: TextStyle(
+                          color: isSelected 
+                              ? ThemeService.primaryColor
+                              : (_themeService.isDarkMode ? ThemeService.darkTextPrimary : Colors.black87),
+                          fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                        ),
+                      );
+                    }).toList(),
                   ),
                 ],
               ),

@@ -15,6 +15,8 @@ class ItemTile extends StatelessWidget {
     this.onSelectMultiple,
     this.onPrioritize,
     this.onUnprioritize,
+    this.onFreeze,
+    this.onUnfreeze,
     this.isDarkMode = false,
     this.isSelectionMode = false,
     this.isSelected = false,
@@ -37,6 +39,8 @@ class ItemTile extends StatelessWidget {
   final VoidCallback? onSelectMultiple;
   final VoidCallback? onPrioritize;
   final VoidCallback? onUnprioritize;
+  final VoidCallback? onFreeze;
+  final VoidCallback? onUnfreeze;
   final bool isDarkMode;
   final bool isSelectionMode;
   final bool isSelected;
@@ -313,6 +317,8 @@ class ItemTile extends StatelessWidget {
                         if (v == 'select_multiple' && onSelectMultiple != null) onSelectMultiple!();
                         if (v == 'prioritize' && onPrioritize != null) onPrioritize!();
                         if (v == 'unprioritize' && onUnprioritize != null) onUnprioritize!();
+                        if (v == 'freeze' && onFreeze != null) onFreeze!();
+                        if (v == 'unfreeze' && onUnfreeze != null) onUnfreeze!();
                       },
                       itemBuilder: (_) => [
                         if (onSelectMultiple != null)
@@ -385,6 +391,36 @@ class ItemTile extends StatelessWidget {
                                 ),
                                 const SizedBox(width: 8),
                                 const Text('Remove Priority'),
+                              ],
+                            ),
+                          ),
+                        if (onFreeze != null && !isFrozen)
+                          PopupMenuItem(
+                            value: 'freeze',
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.ac_unit_rounded,
+                                  size: 18,
+                                  color: Color(0xFF00BCD4),
+                                ),
+                                const SizedBox(width: 8),
+                                const Text('Freeze Item'),
+                              ],
+                            ),
+                          ),
+                        if (onUnfreeze != null && isFrozen)
+                          PopupMenuItem(
+                            value: 'unfreeze',
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.whatshot_rounded,
+                                  size: 18,
+                                  color: Color(0xFF00BCD4),
+                                ),
+                                const SizedBox(width: 8),
+                                const Text('Unfreeze Item'),
                               ],
                             ),
                           ),
@@ -626,6 +662,8 @@ class ItemTile extends StatelessWidget {
                 if (v == 'select_multiple' && onSelectMultiple != null) onSelectMultiple!();
                 if (v == 'prioritize' && onPrioritize != null) onPrioritize!();
                 if (v == 'unprioritize' && onUnprioritize != null) onUnprioritize!();
+                if (v == 'freeze' && onFreeze != null) onFreeze!();
+                if (v == 'unfreeze' && onUnfreeze != null) onUnfreeze!();
               },
               itemBuilder: (_) => [
                 if (onSelectMultiple != null)
@@ -698,6 +736,36 @@ class ItemTile extends StatelessWidget {
                         ),
                         const SizedBox(width: 8),
                         const Text('Remove Priority'),
+                      ],
+                    ),
+                  ),
+                if (onFreeze != null && !isFrozen)
+                  PopupMenuItem(
+                    value: 'freeze',
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.ac_unit_rounded,
+                          size: 18,
+                          color: Color(0xFF00BCD4),
+                        ),
+                        const SizedBox(width: 8),
+                        const Text('Freeze Item'),
+                      ],
+                    ),
+                  ),
+                if (onUnfreeze != null && isFrozen)
+                  PopupMenuItem(
+                    value: 'unfreeze',
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.whatshot_rounded,
+                          size: 18,
+                          color: Color(0xFF00BCD4),
+                        ),
+                        const SizedBox(width: 8),
+                        const Text('Unfreeze Item'),
                       ],
                     ),
                   ),
