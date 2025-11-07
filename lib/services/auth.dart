@@ -1,6 +1,7 @@
 import 'dart:io' show Platform;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'subscription_service.dart';
 
 class AuthService {
   AuthService._();
@@ -50,10 +51,20 @@ class AuthService {
           idToken: googleAuth.idToken,
         );
 
-        return await _auth.signInWithCredential(credential);
+        final result = await _auth.signInWithCredential(credential);
+
+        // Initialize subscription for new users
+        await SubscriptionService.instance.initializeUserSubscription(result.user!.uid);
+
+        return result;
       } else {
         final provider = GoogleAuthProvider();
-        return await _auth.signInWithProvider(provider);
+        final result = await _auth.signInWithProvider(provider);
+
+        // Initialize subscription for new users
+        await SubscriptionService.instance.initializeUserSubscription(result.user!.uid);
+
+        return result;
       }
     } catch (e) {
       throw Exception('Google sign-in failed: $e');
@@ -153,10 +164,15 @@ class AuthService {
 
   Future<UserCredential> registerWithEmailPassword(String email, String password) async {
     try {
-      return await _auth.createUserWithEmailAndPassword(
+      final result = await _auth.createUserWithEmailAndPassword(
         email: email.trim(),
         password: password,
       );
+
+      // Initialize subscription for new users
+      await SubscriptionService.instance.initializeUserSubscription(result.user!.uid);
+
+      return result;
     } on FirebaseAuthException catch (e) {
       switch (e.code) {
         case 'email-already-in-use':

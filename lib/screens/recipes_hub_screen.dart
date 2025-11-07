@@ -4,7 +4,9 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/theme_service.dart';
 import '../services/llm_service.dart';
+import '../services/subscription_service.dart';
 import '../models/recipe.dart';
+import '../widgets/upgrade_dialog.dart';
 import 'create_recipe_screen.dart';
 import 'saved_recipes_screen.dart';
 import 'community_recipes_screen.dart';
@@ -42,6 +44,25 @@ class _RecipesHubScreenState extends State<RecipesHubScreen> {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
+    // Check if user can generate recipes
+    final canGenerate = await SubscriptionService.instance.canGenerateRecipes();
+    if (!canGenerate) {
+      final remaining = await SubscriptionService.instance.getRemainingRecipesToday();
+      if (mounted) {
+        final shouldUpgrade = await showRecipeLimitUpgradeDialog(context, remaining);
+        if (shouldUpgrade) {
+          // Navigate to settings or show upgrade options
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Premium upgrade coming soon! Contact support for early access.'),
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+      }
+      return;
+    }
+
     // Show recipe preferences dialog
     String recipeMode = 'any';
     String cuisineType = 'any';
@@ -49,7 +70,7 @@ class _RecipesHubScreenState extends State<RecipesHubScreen> {
     String cookingTool = 'any';
     bool strictMode = false;
     final keywordController = TextEditingController();
-    
+
     final options = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -68,7 +89,7 @@ class _RecipesHubScreenState extends State<RecipesHubScreen> {
                 Container(
                   padding: const EdgeInsets.all(24),
                   decoration: BoxDecoration(
-                    color: _themeService.isDarkMode 
+                    color: _themeService.isDarkMode
                         ? Colors.white.withOpacity(0.05)
                         : const Color(0xFF3498DB).withOpacity(0.08),
                     borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
@@ -114,7 +135,7 @@ class _RecipesHubScreenState extends State<RecipesHubScreen> {
                     ],
                   ),
                 ),
-                
+
                 // Content
                 Expanded(
                   child: SingleChildScrollView(
@@ -131,9 +152,9 @@ class _RecipesHubScreenState extends State<RecipesHubScreen> {
                           {'label': '🥗 Healthy', 'value': 'healthy'},
                           {'label': '⚡ Quick', 'value': 'quick'},
                         ], (value) => setDialogState(() => recipeMode = value)),
-                        
+
                         const SizedBox(height: 20),
-                        
+
                         _buildDialogSection('Cuisine Type', cuisineType, [
                           {'label': 'Any Cuisine', 'value': 'any'},
                           {'label': '🥢 Asian', 'value': 'asian'},
@@ -145,9 +166,9 @@ class _RecipesHubScreenState extends State<RecipesHubScreen> {
                           {'label': '🍛 Indian', 'value': 'indian'},
                           {'label': '🌶️ Mexican', 'value': 'mexican'},
                         ], (value) => setDialogState(() => cuisineType = value)),
-                        
+
                         const SizedBox(height: 20),
-                        
+
                         _buildDialogSection('Cooking Tool', cookingTool, [
                           {'label': 'Any Tool', 'value': 'any'},
                           {'label': '🍳 Pan/Skillet', 'value': 'pan'},
@@ -158,9 +179,9 @@ class _RecipesHubScreenState extends State<RecipesHubScreen> {
                           {'label': '🔥 Oven', 'value': 'oven'},
                           {'label': '🍲 Pot', 'value': 'pot'},
                         ], (value) => setDialogState(() => cookingTool = value)),
-                        
+
                         const SizedBox(height: 24),
-                        
+
                         Text(
                           'Recipe Keywords (Optional)',
                           style: TextStyle(
@@ -202,9 +223,9 @@ class _RecipesHubScreenState extends State<RecipesHubScreen> {
                             });
                           },
                         ),
-                        
+
                         const SizedBox(height: 24),
-                        
+
                         CheckboxListTile(
                           title: Text(
                             'Strict Mode',
@@ -230,7 +251,7 @@ class _RecipesHubScreenState extends State<RecipesHubScreen> {
                     ),
                   ),
                 ),
-                
+
                 // Action buttons
                 Container(
                   padding: EdgeInsets.fromLTRB(
@@ -287,7 +308,7 @@ class _RecipesHubScreenState extends State<RecipesHubScreen> {
     );
 
     if (options == null) return;
-    
+
     final selectedMode = options['recipeMode'] as String;
     final selectedCuisine = options['cuisineType'] as String;
     final keyword = options['keyword'] as String?;
@@ -369,6 +390,9 @@ class _RecipesHubScreenState extends State<RecipesHubScreen> {
         dietPreferences: dietPreferences.isNotEmpty ? dietPreferences : null,
       );
 
+      // Increment recipe generation count for free users
+      await SubscriptionService.instance.incrementRecipeCount();
+
       if (!mounted) return;
       Navigator.of(context).pop(); // Close loading dialog
 
@@ -447,7 +471,7 @@ class _RecipesHubScreenState extends State<RecipesHubScreen> {
       checkmarkColor: const Color(0xFF3498DB),
       backgroundColor: _themeService.isDarkMode ? ThemeService.darkBackground : Colors.grey[100],
       labelStyle: TextStyle(
-        color: isSelected 
+        color: isSelected
             ? const Color(0xFF3498DB)
             : (_themeService.isDarkMode ? ThemeService.darkTextPrimary : ThemeService.lightTextPrimary),
         fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
@@ -469,25 +493,25 @@ class _RecipesHubScreenState extends State<RecipesHubScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _themeService.isDarkMode 
-          ? ThemeService.darkBackground 
+      backgroundColor: _themeService.isDarkMode
+          ? ThemeService.darkBackground
           : ThemeService.lightBackground,
       appBar: AppBar(
         title: Text(
           'Recipes',
           style: TextStyle(
-            color: _themeService.isDarkMode 
-                ? ThemeService.darkTextPrimary 
+            color: _themeService.isDarkMode
+                ? ThemeService.darkTextPrimary
                 : ThemeService.lightTextPrimary,
           ),
         ),
-        backgroundColor: _themeService.isDarkMode 
-            ? ThemeService.darkBackground 
+        backgroundColor: _themeService.isDarkMode
+            ? ThemeService.darkBackground
             : ThemeService.lightBackground,
         elevation: 0,
         iconTheme: IconThemeData(
-          color: _themeService.isDarkMode 
-              ? ThemeService.darkTextPrimary 
+          color: _themeService.isDarkMode
+              ? ThemeService.darkTextPrimary
               : ThemeService.lightTextPrimary,
         ),
       ),
@@ -502,8 +526,8 @@ class _RecipesHubScreenState extends State<RecipesHubScreen> {
               style: TextStyle(
                 fontSize: 28,
                 fontWeight: FontWeight.bold,
-                color: _themeService.isDarkMode 
-                    ? ThemeService.darkTextPrimary 
+                color: _themeService.isDarkMode
+                    ? ThemeService.darkTextPrimary
                     : const Color(0xFF2C3E50),
               ),
             ),
@@ -512,8 +536,8 @@ class _RecipesHubScreenState extends State<RecipesHubScreen> {
               'Create, save, or discover amazing recipes',
               style: TextStyle(
                 fontSize: 16,
-                color: _themeService.isDarkMode 
-                    ? ThemeService.darkTextSecondary 
+                color: _themeService.isDarkMode
+                    ? ThemeService.darkTextSecondary
                     : const Color(0xFF7F8C8D),
               ),
             ),
@@ -604,9 +628,9 @@ class _RecipesHubScreenState extends State<RecipesHubScreen> {
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: _themeService.isDarkMode 
+              colors: _themeService.isDarkMode
                   ? [
-                      ThemeService.darkCardBackground, 
+                      ThemeService.darkCardBackground,
                       ThemeService.darkCardBackground.withOpacity(0.8)
                     ]
                   : [Colors.white, iconColor.withOpacity(0.05)],
@@ -650,8 +674,8 @@ class _RecipesHubScreenState extends State<RecipesHubScreen> {
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkTextPrimary 
+                        color: _themeService.isDarkMode
+                            ? ThemeService.darkTextPrimary
                             : const Color(0xFF2C3E50),
                       ),
                     ),
@@ -660,8 +684,8 @@ class _RecipesHubScreenState extends State<RecipesHubScreen> {
                       description,
                       style: TextStyle(
                         fontSize: 14,
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkTextSecondary 
+                        color: _themeService.isDarkMode
+                            ? ThemeService.darkTextSecondary
                             : const Color(0xFF7F8C8D),
                       ),
                     ),
@@ -671,8 +695,8 @@ class _RecipesHubScreenState extends State<RecipesHubScreen> {
               Icon(
                 Icons.arrow_forward_ios_rounded,
                 size: 20,
-                color: _themeService.isDarkMode 
-                    ? ThemeService.darkTextSecondary 
+                color: _themeService.isDarkMode
+                    ? ThemeService.darkTextSecondary
                     : const Color(0xFFBDC3C7),
               ),
             ],

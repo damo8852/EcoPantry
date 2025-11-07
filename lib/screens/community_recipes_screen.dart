@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/theme_service.dart';
+import '../services/subscription_service.dart';
+import '../widgets/upgrade_dialog.dart';
 
 class CommunityRecipesScreen extends StatefulWidget {
   const CommunityRecipesScreen({super.key});
@@ -15,11 +17,14 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
   final ThemeService _themeService = ThemeService();
   final _auth = FirebaseAuth.instance;
   final _db = FirebaseFirestore.instance;
-  
+
   String _sortBy = 'recent'; // recent, popular, top_rated
   String _cookingToolFilter = 'all';
   String _styleFilter = 'all';
   String _cuisineFilter = 'all';
+
+  bool _isCheckingAccess = true;
+  bool _hasAccess = false;
 
   User? get user => _auth.currentUser;
 
@@ -27,6 +32,17 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
   void initState() {
     super.initState();
     _themeService.addListener(_onThemeChanged);
+    _checkCommunityRecipesAccess();
+  }
+
+  Future<void> _checkCommunityRecipesAccess() async {
+    final hasAccess = await SubscriptionService.instance.canAccessCommunityRecipes();
+    if (mounted) {
+      setState(() {
+        _hasAccess = hasAccess;
+        _isCheckingAccess = false;
+      });
+    }
   }
 
   void _onThemeChanged() {
@@ -39,6 +55,10 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
   void dispose() {
     _themeService.removeListener(_onThemeChanged);
     super.dispose();
+  }
+
+  Future<void> _handleUpgrade() async {
+    await showCommunityRecipesUpgradeDialog(context);
   }
 
   bool _matchesFilters(Map<String, dynamic> recipe) {
@@ -87,7 +107,7 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
-              
+
               // Header
               Padding(
                 padding: const EdgeInsets.all(20),
@@ -258,7 +278,7 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
               checkmarkColor: const Color(0xFF9B59B6),
               backgroundColor: _themeService.isDarkMode ? ThemeService.darkBackground : Colors.grey[100],
               labelStyle: TextStyle(
-                color: isSelected 
+                color: isSelected
                     ? const Color(0xFF9B59B6)
                     : (_themeService.isDarkMode ? ThemeService.darkTextPrimary : ThemeService.lightTextPrimary),
                 fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
@@ -283,7 +303,7 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
 
   Query<Map<String, dynamic>> _getQuery() {
     var query = _db.collection('community_recipes');
-    
+
     switch (_sortBy) {
       case 'recent':
         return query.orderBy('createdAt', descending: true).limit(50);
@@ -307,10 +327,10 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
     try {
       final recipeRef = _db.collection('community_recipes').doc(recipeId);
       final ratingsCollection = recipeRef.collection('ratings');
-      
+
       // Check if user already rated
       final existingRating = await ratingsCollection.doc(user!.uid).get();
-      
+
       if (existingRating.exists) {
         // Update existing rating
         await ratingsCollection.doc(user!.uid).update({
@@ -427,7 +447,7 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
 
   Future<bool> _isRecipeSaved(String recipeId) async {
     if (user == null) return false;
-    
+
     final existing = await _db
         .collection('users')
         .doc(user!.uid)
@@ -450,8 +470,8 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
         maxChildSize: 0.95,
         builder: (context, scrollController) => Container(
           decoration: BoxDecoration(
-            color: _themeService.isDarkMode 
-                ? ThemeService.darkCardBackground 
+            color: _themeService.isDarkMode
+                ? ThemeService.darkCardBackground
                 : Colors.white,
             borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
           ),
@@ -467,26 +487,193 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Show loading state while checking access
+    if (_isCheckingAccess) {
+      return Scaffold(
+        backgroundColor: _themeService.isDarkMode
+            ? ThemeService.darkBackground
+            : ThemeService.lightBackground,
+        appBar: AppBar(
+          title: Text(
+            'Community Recipes',
+            style: TextStyle(
+              color: _themeService.isDarkMode
+                  ? ThemeService.darkTextPrimary
+                  : ThemeService.lightTextPrimary,
+            ),
+          ),
+          backgroundColor: _themeService.isDarkMode
+              ? ThemeService.darkBackground
+              : ThemeService.lightBackground,
+          elevation: 0,
+          iconTheme: IconThemeData(
+            color: _themeService.isDarkMode
+                ? ThemeService.darkTextPrimary
+                : ThemeService.lightTextPrimary,
+          ),
+        ),
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    // Show upgrade screen if no access
+    if (!_hasAccess) {
+      return Scaffold(
+        backgroundColor: _themeService.isDarkMode
+            ? ThemeService.darkBackground
+            : ThemeService.lightBackground,
+        appBar: AppBar(
+          title: Text(
+            'Community Recipes',
+            style: TextStyle(
+              color: _themeService.isDarkMode
+                  ? ThemeService.darkTextPrimary
+                  : ThemeService.lightTextPrimary,
+            ),
+          ),
+          backgroundColor: _themeService.isDarkMode
+              ? ThemeService.darkBackground
+              : ThemeService.lightBackground,
+          elevation: 0,
+          iconTheme: IconThemeData(
+            color: _themeService.isDarkMode
+                ? ThemeService.darkTextPrimary
+                : ThemeService.lightTextPrimary,
+          ),
+        ),
+        body: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFFFFD700), Color(0xFFFFA500)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                  child: const Icon(
+                    Icons.workspace_premium,
+                    color: Colors.white,
+                    size: 64,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  'Premium Feature',
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    color: _themeService.isDarkMode
+                        ? ThemeService.darkTextPrimary
+                        : const Color(0xFF2C3E50),
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Community recipes are available with Premium.\nDiscover and share recipes with thousands of users!',
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: _themeService.isDarkMode
+                        ? ThemeService.darkTextSecondary
+                        : const Color(0xFF7F8C8D),
+                    height: 1.5,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 32),
+
+                // Premium Benefits List
+                _buildBenefitItem(
+                  '✨ Unlimited Recipe Generation',
+                  'Generate as many recipes as you want',
+                ),
+                const SizedBox(height: 16),
+                _buildBenefitItem(
+                  '🛒 Shopping List Access',
+                  'Full access to shopping list features',
+                ),
+                const SizedBox(height: 16),
+                _buildBenefitItem(
+                  '👥 Community Recipes',
+                  'Access and share recipes with the community',
+                ),
+                const SizedBox(height: 16),
+                _buildBenefitItem(
+                  '📸 Unlimited Receipt Scanning',
+                  'Scan as many receipts as you want',
+                ),
+                const SizedBox(height: 16),
+                _buildBenefitItem(
+                  '🎯 Priority Support',
+                  'Get help faster when you need it',
+                ),
+                const SizedBox(height: 16),
+                _buildBenefitItem(
+                  '🚀 Future Features',
+                  'First access to new premium features',
+                ),
+                const SizedBox(height: 32),
+
+                ElevatedButton(
+                  onPressed: _handleUpgrade,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFFFD700),
+                    foregroundColor: const Color(0xFF2C3E50),
+                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: const [
+                      Icon(Icons.workspace_premium, size: 24),
+                      SizedBox(width: 8),
+                      Text(
+                        'Upgrade to Premium',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    // Show community recipes for premium users
     return Scaffold(
-      backgroundColor: _themeService.isDarkMode 
-          ? ThemeService.darkBackground 
+      backgroundColor: _themeService.isDarkMode
+          ? ThemeService.darkBackground
           : ThemeService.lightBackground,
       appBar: AppBar(
         title: Text(
           'Community Recipes',
           style: TextStyle(
-            color: _themeService.isDarkMode 
-                ? ThemeService.darkTextPrimary 
+            color: _themeService.isDarkMode
+                ? ThemeService.darkTextPrimary
                 : ThemeService.lightTextPrimary,
           ),
         ),
-        backgroundColor: _themeService.isDarkMode 
-            ? ThemeService.darkBackground 
+        backgroundColor: _themeService.isDarkMode
+            ? ThemeService.darkBackground
             : ThemeService.lightBackground,
         elevation: 0,
         iconTheme: IconThemeData(
-          color: _themeService.isDarkMode 
-              ? ThemeService.darkTextPrimary 
+          color: _themeService.isDarkMode
+              ? ThemeService.darkTextPrimary
               : ThemeService.lightTextPrimary,
         ),
         actions: [
@@ -524,8 +711,8 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
               child: Text(
                 'Error: ${snapshot.error}',
                 style: TextStyle(
-                  color: _themeService.isDarkMode 
-                      ? ThemeService.darkTextPrimary 
+                  color: _themeService.isDarkMode
+                      ? ThemeService.darkTextPrimary
                       : ThemeService.lightTextPrimary,
                 ),
               ),
@@ -537,7 +724,7 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
           }
 
           final allDocs = snapshot.data?.docs ?? [];
-          
+
           // Apply filters
           final docs = allDocs.where((doc) {
             final data = doc.data();
@@ -547,7 +734,7 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
           if (allDocs.isEmpty) {
             return _buildEmptyState();
           }
-          
+
           if (docs.isEmpty) {
             return _buildNoResultsState();
           }
@@ -576,8 +763,8 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
             Icon(
               Icons.people_outline,
               size: 64,
-              color: _themeService.isDarkMode 
-                  ? ThemeService.darkTextSecondary 
+              color: _themeService.isDarkMode
+                  ? ThemeService.darkTextSecondary
                   : Colors.grey[400],
             ),
             const SizedBox(height: 16),
@@ -586,8 +773,8 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
               style: TextStyle(
                 fontSize: 24,
                 fontWeight: FontWeight.bold,
-                color: _themeService.isDarkMode 
-                    ? ThemeService.darkTextPrimary 
+                color: _themeService.isDarkMode
+                    ? ThemeService.darkTextPrimary
                     : ThemeService.lightTextPrimary,
               ),
             ),
@@ -597,8 +784,8 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 16,
-                color: _themeService.isDarkMode 
-                    ? ThemeService.darkTextSecondary 
+                color: _themeService.isDarkMode
+                    ? ThemeService.darkTextSecondary
                     : ThemeService.lightTextSecondary,
               ),
             ),
@@ -618,8 +805,8 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
             Icon(
               Icons.search_off,
               size: 64,
-              color: _themeService.isDarkMode 
-                  ? ThemeService.darkTextSecondary 
+              color: _themeService.isDarkMode
+                  ? ThemeService.darkTextSecondary
                   : Colors.grey[400],
             ),
             const SizedBox(height: 16),
@@ -628,8 +815,8 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
               style: TextStyle(
                 fontSize: 24,
                 fontWeight: FontWeight.bold,
-                color: _themeService.isDarkMode 
-                    ? ThemeService.darkTextPrimary 
+                color: _themeService.isDarkMode
+                    ? ThemeService.darkTextPrimary
                     : ThemeService.lightTextPrimary,
               ),
             ),
@@ -639,8 +826,8 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 16,
-                color: _themeService.isDarkMode 
-                    ? ThemeService.darkTextSecondary 
+                color: _themeService.isDarkMode
+                    ? ThemeService.darkTextSecondary
                     : ThemeService.lightTextSecondary,
               ),
             ),
@@ -683,7 +870,7 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
       child: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: _themeService.isDarkMode 
+            colors: _themeService.isDarkMode
                 ? [ThemeService.darkCardBackground, ThemeService.darkCardBackground.withOpacity(0.8)]
                 : [Colors.white, const Color(0xFFF8F9FA)],
             begin: Alignment.topLeft,
@@ -709,7 +896,7 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: _themeService.isDarkMode 
+                color: _themeService.isDarkMode
                     ? Colors.white.withOpacity(0.05)
                     : const Color(0xFF9B59B6).withOpacity(0.08),
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
@@ -735,8 +922,8 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
                             fontSize: 15,
-                            color: _themeService.isDarkMode 
-                                ? ThemeService.darkTextPrimary 
+                            color: _themeService.isDarkMode
+                                ? ThemeService.darkTextPrimary
                                 : const Color(0xFF2C3E50),
                           ),
                         ),
@@ -746,8 +933,8 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
                               Icon(
                                 Icons.person,
                                 size: 12,
-                                color: _themeService.isDarkMode 
-                                    ? ThemeService.darkTextSecondary 
+                                color: _themeService.isDarkMode
+                                    ? ThemeService.darkTextSecondary
                                     : const Color(0xFF7F8C8D),
                               ),
                               const SizedBox(width: 4),
@@ -755,8 +942,8 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
                                 'User Created',
                                 style: TextStyle(
                                   fontSize: 12,
-                                  color: _themeService.isDarkMode 
-                                      ? ThemeService.darkTextSecondary 
+                                  color: _themeService.isDarkMode
+                                      ? ThemeService.darkTextSecondary
                                       : const Color(0xFF7F8C8D),
                                 ),
                               ),
@@ -793,20 +980,20 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
                     style: TextStyle(
                       fontSize: 22,
                       fontWeight: FontWeight.bold,
-                      color: _themeService.isDarkMode 
-                          ? ThemeService.darkTextPrimary 
+                      color: _themeService.isDarkMode
+                          ? ThemeService.darkTextPrimary
                           : const Color(0xFF2C3E50),
                     ),
                   ),
-                  
+
                   if (description.isNotEmpty) ...[
                     const SizedBox(height: 8),
                     Text(
                       description,
                       style: TextStyle(
                         fontSize: 14,
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkTextSecondary 
+                        color: _themeService.isDarkMode
+                            ? ThemeService.darkTextSecondary
                             : const Color(0xFF7F8C8D),
                       ),
                       maxLines: 2,
@@ -832,14 +1019,14 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
                             const Icon(Icons.star, size: 16, color: Colors.amber),
                             const SizedBox(width: 4),
                             Text(
-                              totalRatings > 0 
+                              totalRatings > 0
                                   ? '${averageRating.toStringAsFixed(1)} ($totalRatings)'
                                   : 'No ratings',
                               style: TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w600,
-                                color: _themeService.isDarkMode 
-                                    ? ThemeService.darkTextPrimary 
+                                color: _themeService.isDarkMode
+                                    ? ThemeService.darkTextPrimary
                                     : Colors.amber[900],
                               ),
                             ),
@@ -864,8 +1051,8 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
                               style: TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w600,
-                                color: _themeService.isDarkMode 
-                                    ? ThemeService.darkTextPrimary 
+                                color: _themeService.isDarkMode
+                                    ? ThemeService.darkTextPrimary
                                     : Colors.green[900],
                               ),
                             ),
@@ -890,8 +1077,8 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
                               style: TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w600,
-                                color: _themeService.isDarkMode 
-                                    ? ThemeService.darkTextPrimary 
+                                color: _themeService.isDarkMode
+                                    ? ThemeService.darkTextPrimary
                                     : Colors.blue[900],
                               ),
                             ),
@@ -922,8 +1109,8 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
                     '${ingredients.length} ingredients • ${instructions.length} steps',
                     style: TextStyle(
                       fontSize: 13,
-                      color: _themeService.isDarkMode 
-                          ? ThemeService.darkTextSecondary 
+                      color: _themeService.isDarkMode
+                          ? ThemeService.darkTextSecondary
                           : const Color(0xFF7F8C8D),
                     ),
                   ),
@@ -1025,19 +1212,19 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
 
   void _showRatingDialog(String recipeId, Map<String, dynamic> data) {
     double selectedRating = 0;
-    
+
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          backgroundColor: _themeService.isDarkMode 
-              ? ThemeService.darkCardBackground 
+          backgroundColor: _themeService.isDarkMode
+              ? ThemeService.darkCardBackground
               : Colors.white,
           title: Text(
             'Rate this Recipe',
             style: TextStyle(
-              color: _themeService.isDarkMode 
-                  ? ThemeService.darkTextPrimary 
+              color: _themeService.isDarkMode
+                  ? ThemeService.darkTextPrimary
                   : ThemeService.lightTextPrimary,
             ),
           ),
@@ -1047,8 +1234,8 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
               Text(
                 'Tap a star to rate',
                 style: TextStyle(
-                  color: _themeService.isDarkMode 
-                      ? ThemeService.darkTextSecondary 
+                  color: _themeService.isDarkMode
+                      ? ThemeService.darkTextSecondary
                       : ThemeService.lightTextSecondary,
                 ),
               ),
@@ -1078,7 +1265,7 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
               child: const Text('Cancel'),
             ),
             FilledButton(
-              onPressed: selectedRating > 0 
+              onPressed: selectedRating > 0
                   ? () {
                       Navigator.pop(context);
                       _rateRecipe(recipeId, data, selectedRating);
@@ -1113,8 +1300,8 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
         maxChildSize: 0.95,
         builder: (context, scrollController) => Container(
           decoration: BoxDecoration(
-            color: _themeService.isDarkMode 
-                ? ThemeService.darkCardBackground 
+            color: _themeService.isDarkMode
+                ? ThemeService.darkCardBackground
                 : Colors.white,
             borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
           ),
@@ -1138,8 +1325,8 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
                 style: TextStyle(
                   fontSize: 28,
                   fontWeight: FontWeight.bold,
-                  color: _themeService.isDarkMode 
-                      ? ThemeService.darkTextPrimary 
+                  color: _themeService.isDarkMode
+                      ? ThemeService.darkTextPrimary
                       : const Color(0xFF2C3E50),
                 ),
               ),
@@ -1151,8 +1338,8 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
                   Text(
                     '$prepTime prep',
                     style: TextStyle(
-                      color: _themeService.isDarkMode 
-                          ? ThemeService.darkTextSecondary 
+                      color: _themeService.isDarkMode
+                          ? ThemeService.darkTextSecondary
                           : const Color(0xFF7F8C8D),
                     ),
                   ),
@@ -1161,8 +1348,8 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
                     Text(
                       '$cookTime cook',
                       style: TextStyle(
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkTextSecondary 
+                        color: _themeService.isDarkMode
+                            ? ThemeService.darkTextSecondary
                             : const Color(0xFF7F8C8D),
                       ),
                     ),
@@ -1172,8 +1359,8 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
                     Text(
                       '$servings servings',
                       style: TextStyle(
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkTextSecondary 
+                        color: _themeService.isDarkMode
+                            ? ThemeService.darkTextSecondary
                             : const Color(0xFF7F8C8D),
                       ),
                     ),
@@ -1186,8 +1373,8 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
                 style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.bold,
-                  color: _themeService.isDarkMode 
-                      ? ThemeService.darkTextPrimary 
+                  color: _themeService.isDarkMode
+                      ? ThemeService.darkTextPrimary
                       : const Color(0xFF2C3E50),
                 ),
               ),
@@ -1212,8 +1399,8 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
                             ingredient,
                             style: TextStyle(
                               fontSize: 15,
-                              color: _themeService.isDarkMode 
-                                  ? ThemeService.darkTextSecondary 
+                              color: _themeService.isDarkMode
+                                  ? ThemeService.darkTextSecondary
                                   : const Color(0xFF2C3E50),
                             ),
                           ),
@@ -1227,8 +1414,8 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
                 style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.bold,
-                  color: _themeService.isDarkMode 
-                      ? ThemeService.darkTextPrimary 
+                  color: _themeService.isDarkMode
+                      ? ThemeService.darkTextPrimary
                       : const Color(0xFF2C3E50),
                 ),
               ),
@@ -1266,8 +1453,8 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
                           style: TextStyle(
                             fontSize: 15,
                             height: 1.5,
-                            color: _themeService.isDarkMode 
-                                ? ThemeService.darkTextSecondary 
+                            color: _themeService.isDarkMode
+                                ? ThemeService.darkTextSecondary
                                 : const Color(0xFF2C3E50),
                           ),
                         ),
@@ -1280,6 +1467,55 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildBenefitItem(String title, String description) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          margin: const EdgeInsets.only(top: 2),
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFD700).withOpacity(0.15),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: const Icon(
+            Icons.check_circle,
+            color: Color(0xFFFFD700),
+            size: 20,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: TextStyle(
+                  color: _themeService.isDarkMode
+                      ? ThemeService.darkTextPrimary
+                      : const Color(0xFF2C3E50),
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                description,
+                style: TextStyle(
+                  color: _themeService.isDarkMode
+                      ? ThemeService.darkTextSecondary
+                      : const Color(0xFF7F8C8D),
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1338,7 +1574,7 @@ class _CommentsWidgetState extends State<_CommentsWidget> {
       });
 
       _commentController.clear();
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Comment posted!')),
@@ -1367,7 +1603,7 @@ class _CommentsWidgetState extends State<_CommentsWidget> {
             borderRadius: BorderRadius.circular(2),
           ),
         ),
-        
+
         // Header
         Padding(
           padding: const EdgeInsets.all(20),
@@ -1379,8 +1615,8 @@ class _CommentsWidgetState extends State<_CommentsWidget> {
                   style: TextStyle(
                     fontSize: 22,
                     fontWeight: FontWeight.bold,
-                    color: _themeService.isDarkMode 
-                        ? ThemeService.darkTextPrimary 
+                    color: _themeService.isDarkMode
+                        ? ThemeService.darkTextPrimary
                         : const Color(0xFF2C3E50),
                   ),
                 ),
@@ -1421,8 +1657,8 @@ class _CommentsWidgetState extends State<_CommentsWidget> {
                         Icon(
                           Icons.chat_bubble_outline,
                           size: 64,
-                          color: _themeService.isDarkMode 
-                              ? ThemeService.darkTextSecondary 
+                          color: _themeService.isDarkMode
+                              ? ThemeService.darkTextSecondary
                               : Colors.grey[400],
                         ),
                         const SizedBox(height: 16),
@@ -1431,8 +1667,8 @@ class _CommentsWidgetState extends State<_CommentsWidget> {
                           style: TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.bold,
-                            color: _themeService.isDarkMode 
-                                ? ThemeService.darkTextPrimary 
+                            color: _themeService.isDarkMode
+                                ? ThemeService.darkTextPrimary
                                 : ThemeService.lightTextPrimary,
                           ),
                         ),
@@ -1440,8 +1676,8 @@ class _CommentsWidgetState extends State<_CommentsWidget> {
                         Text(
                           'Be the first to comment!',
                           style: TextStyle(
-                            color: _themeService.isDarkMode 
-                                ? ThemeService.darkTextSecondary 
+                            color: _themeService.isDarkMode
+                                ? ThemeService.darkTextSecondary
                                 : ThemeService.lightTextSecondary,
                           ),
                         ),
@@ -1483,8 +1719,8 @@ class _CommentsWidgetState extends State<_CommentsWidget> {
                                     style: TextStyle(
                                       fontWeight: FontWeight.bold,
                                       fontSize: 14,
-                                      color: _themeService.isDarkMode 
-                                          ? ThemeService.darkTextPrimary 
+                                      color: _themeService.isDarkMode
+                                          ? ThemeService.darkTextPrimary
                                           : const Color(0xFF2C3E50),
                                     ),
                                   ),
@@ -1494,8 +1730,8 @@ class _CommentsWidgetState extends State<_CommentsWidget> {
                                       _formatTimestamp(timestamp),
                                       style: TextStyle(
                                         fontSize: 12,
-                                        color: _themeService.isDarkMode 
-                                            ? ThemeService.darkTextSecondary 
+                                        color: _themeService.isDarkMode
+                                            ? ThemeService.darkTextSecondary
                                             : Colors.grey[600],
                                       ),
                                     ),
@@ -1507,8 +1743,8 @@ class _CommentsWidgetState extends State<_CommentsWidget> {
                                 commentText,
                                 style: TextStyle(
                                   fontSize: 14,
-                                  color: _themeService.isDarkMode 
-                                      ? ThemeService.darkTextSecondary 
+                                  color: _themeService.isDarkMode
+                                      ? ThemeService.darkTextSecondary
                                       : const Color(0xFF2C3E50),
                                 ),
                               ),
@@ -1535,8 +1771,8 @@ class _CommentsWidgetState extends State<_CommentsWidget> {
             bottom: MediaQuery.of(context).viewInsets.bottom + 12 + (Platform.isAndroid ? MediaQuery.of(context).viewPadding.bottom : 0),
           ),
           decoration: BoxDecoration(
-            color: _themeService.isDarkMode 
-                ? ThemeService.darkBackground 
+            color: _themeService.isDarkMode
+                ? ThemeService.darkBackground
                 : Colors.grey[50],
           ),
           child: Row(
@@ -1553,8 +1789,8 @@ class _CommentsWidgetState extends State<_CommentsWidget> {
                   decoration: InputDecoration(
                     hintText: 'Add a comment...',
                     hintStyle: TextStyle(
-                      color: _themeService.isDarkMode 
-                          ? ThemeService.darkTextSecondary 
+                      color: _themeService.isDarkMode
+                          ? ThemeService.darkTextSecondary
                           : ThemeService.lightTextSecondary,
                     ),
                     border: OutlineInputBorder(
@@ -1562,14 +1798,14 @@ class _CommentsWidgetState extends State<_CommentsWidget> {
                       borderSide: BorderSide.none,
                     ),
                     filled: true,
-                    fillColor: _themeService.isDarkMode 
-                        ? ThemeService.darkCardBackground 
+                    fillColor: _themeService.isDarkMode
+                        ? ThemeService.darkCardBackground
                         : Colors.grey[200],
                     contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   ),
                   style: TextStyle(
-                    color: _themeService.isDarkMode 
-                        ? ThemeService.darkTextPrimary 
+                    color: _themeService.isDarkMode
+                        ? ThemeService.darkTextPrimary
                         : ThemeService.lightTextPrimary,
                   ),
                   maxLines: null,

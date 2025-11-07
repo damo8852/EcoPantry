@@ -15,7 +15,9 @@ import '../services/parser.dart';
 import '../services/llm_service.dart';
 import '../services/theme_service.dart';
 import '../services/config_service.dart';
+import '../services/subscription_service.dart';
 import '../models/grocery_type.dart';
+import '../widgets/upgrade_dialog.dart';
 
 class ScanPage extends StatefulWidget {
   const ScanPage({super.key});
@@ -122,7 +124,7 @@ class _ScanPageState extends State<ScanPage> with SingleTickerProviderStateMixin
       );
 
       await _cameraController!.initialize();
-      
+
       if (!mounted) return;
 
       setState(() {
@@ -146,16 +148,16 @@ class _ScanPageState extends State<ScanPage> with SingleTickerProviderStateMixin
 
     try {
       _isProcessingFrame = true;
-      
+
       final image = await _cameraController!.takePicture();
       final inputImage = InputImage.fromFilePath(image.path);
       final recognizedText = await _textRecognizer.processImage(inputImage);
-      
+
       if (mounted) {
         setState(() {
           _liveText = recognizedText.text;
         });
-        
+
         // Only process if text has changed significantly
         if (_hasSignificantChange(recognizedText.text, _lastProcessedText)) {
           _lastProcessedText = recognizedText.text;
@@ -176,16 +178,16 @@ class _ScanPageState extends State<ScanPage> with SingleTickerProviderStateMixin
 
   bool _hasSignificantChange(String newText, String oldText) {
     if (oldText.isEmpty) return newText.isNotEmpty;
-    
+
     // Calculate simple similarity - if less than 70% similar, it's significant
     final newWords = newText.toLowerCase().split(RegExp(r'\s+'));
     final oldWords = oldText.toLowerCase().split(RegExp(r'\s+'));
-    
+
     final commonWords = newWords.where((word) => oldWords.contains(word)).length;
     final totalWords = (newWords.length + oldWords.length) / 2;
-    
+
     if (totalWords == 0) return false;
-    
+
     final similarity = commonWords / totalWords;
     return similarity < 0.7; // More than 30% change
   }
@@ -193,16 +195,16 @@ class _ScanPageState extends State<ScanPage> with SingleTickerProviderStateMixin
   Future<void> _processTextForFoodItems(String text) async {
     // Extract just the new lines/content that might be food items
     final lines = text.split('\n').where((line) => line.trim().isNotEmpty).toList();
-    
+
     for (final line in lines) {
       // Skip if we've already processed a very similar item
-      if (_liveDetectedItems.any((item) => 
+      if (_liveDetectedItems.any((item) =>
         item.name.toLowerCase().contains(line.toLowerCase().trim()) ||
         line.toLowerCase().trim().contains(item.name.toLowerCase())
       )) {
         continue;
       }
-      
+
       // Check if this line is a food item using AI
       final foodItem = await _checkIfFoodItem(line);
       if (foodItem != null) {
@@ -220,20 +222,20 @@ class _ScanPageState extends State<ScanPage> with SingleTickerProviderStateMixin
 
   bool _isDuplicateItem(ParsedItem newItem) {
     final newItemWords = newItem.name.toLowerCase().split(' ').where((w) => w.length > 2).toSet();
-    
+
     for (final existingItem in _liveDetectedItems) {
       final existingWords = existingItem.name.toLowerCase().split(' ').where((w) => w.length > 2).toSet();
-      
+
       // If they share the core food words, it's a duplicate
       // For example: "chicken breast" and "boneless chicken breast" both have "chicken" and "breast"
       final commonWords = newItemWords.intersection(existingWords);
       final maxWords = newItemWords.length > existingWords.length ? newItemWords.length : existingWords.length;
-      
+
       // If more than 60% of words match, it's likely the same item
       if (commonWords.length >= 2 && commonWords.length / maxWords > 0.6) {
         return true;
       }
-      
+
       // Exact core match (like "chicken" matches between items)
       if (newItemWords.contains('chicken') && existingWords.contains('chicken') ||
           newItemWords.contains('beef') && existingWords.contains('beef') ||
@@ -243,14 +245,14 @@ class _ScanPageState extends State<ScanPage> with SingleTickerProviderStateMixin
         final cuts = {'breast', 'thigh', 'wing', 'leg', 'ground', 'steak', 'chop', 'ribs'};
         final newCuts = newItemWords.intersection(cuts);
         final existingCuts = existingWords.intersection(cuts);
-        
+
         // If they have the same cut, it's a duplicate
         if (newCuts.isNotEmpty && existingCuts.isNotEmpty && newCuts.intersection(existingCuts).isNotEmpty) {
           return true;
         }
       }
     }
-    
+
     return false;
   }
 
@@ -258,14 +260,14 @@ class _ScanPageState extends State<ScanPage> with SingleTickerProviderStateMixin
     try {
       final prompt = _buildFoodCheckPrompt(text);
       final response = await _callAIForFoodCheck(prompt);
-      
+
       if (response != null && response.trim().isNotEmpty) {
         return _parseFoodCheckResponse(response);
       }
     } catch (e) {
       print('AI food check failed for "$text": $e');
     }
-    
+
     return null;
   }
 
@@ -295,7 +297,7 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
     try {
       final configService = ConfigService();
       final apiKey = await configService.getOpenAiApiKey();
-      
+
       if (apiKey == null) return null;
 
       final requestBody = {
@@ -323,7 +325,7 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
     } catch (e) {
       print('AI call error: $e');
     }
-    
+
     return null;
   }
 
@@ -331,17 +333,17 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
     try {
       final cleaned = response.trim().toLowerCase();
       if (cleaned == 'null' || cleaned.isEmpty) return null;
-      
+
       // Remove any markdown code blocks
       var jsonStr = response.replaceAll(RegExp(r'```json\s*|\s*```'), '').trim();
-      
+
       final data = json.decode(jsonStr);
-      
+
       if (data is Map<String, dynamic>) {
         final name = data['name']?.toString();
         final quantity = data['quantity'];
         final type = data['type']?.toString();
-        
+
         if (name != null && name.isNotEmpty) {
           final qty = quantity is int ? quantity : (int.tryParse(quantity?.toString() ?? '1') ?? 1);
           return ParsedItem(
@@ -354,7 +356,7 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
     } catch (e) {
       print('Failed to parse food check response: $e');
     }
-    
+
     return null;
   }
 
@@ -410,12 +412,22 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
 
 
   Future<void> _pickAndProcess(ImageSource source) async {
+    // Check receipt scanning limit
+    final canScan = await SubscriptionService.instance.canScanReceipt();
+    if (!canScan) {
+      final remaining = await SubscriptionService.instance.getRemainingReceiptScansToday();
+      if (mounted) {
+        await showReceiptScanLimitUpgradeDialog(context, remaining);
+      }
+      return;
+    }
+
     setState(() {
       _busy = true;
       _err = null;
       _preview = [];
     });
-    
+
     try {
       // Request appropriate permissions based on source
       if (source == ImageSource.camera) {
@@ -437,7 +449,7 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
         } else {
           permission = Permission.photos;
         }
-        
+
         final galleryStatus = await permission.request();
         if (!galleryStatus.isGranted) {
           setState(() {
@@ -447,7 +459,7 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
           return;
         }
       }
-      
+
       final picker = ImagePicker();
       final x = await picker.pickImage(source: source, imageQuality: 85);
       if (x == null) {
@@ -468,9 +480,9 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
 
   Future<void> _saveAll() async {
     if (_preview.isEmpty) return;
-    
+
     setState(() => _busy = true);
-    
+
     try {
       final user = _auth.currentUser!;
       final rules = _rules ?? await ExpiryRules.load();
@@ -486,7 +498,7 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
         // Use type from parsed item if available, otherwise try LLM prediction
         int days = 5; // Default fallback
         GroceryType itemType = it.type; // Use type from parsed item
-        
+
         try {
           final prediction = await LLMService().predictExpiryAndType(it.name);
           if (prediction != null) {
@@ -503,10 +515,10 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
           print('LLM prediction failed for ${it.name}, using rules: $e');
           days = rules.guessDays(it.name);
         }
-        
+
         final expiry = now.add(Duration(days: days));
         final doc = col.doc();
-        
+
         batch.set(doc, {
           'name': it.name,
           'quantity': it.quantity,
@@ -516,7 +528,7 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
           'updatedAt': FieldValue.serverTimestamp(),
           'source': 'receipt',
         });
-        
+
         // Temporarily disable notifications to prevent crashes
         // Schedule notification (don't await here, collect for later)
         // Use a more stable ID generation to avoid potential hash collisions
@@ -530,7 +542,7 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
         //   ),
         // );
       }
-      
+
       // Commit the batch first with timeout
       await batch.commit().timeout(
         const Duration(seconds: 15),
@@ -538,14 +550,17 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
           throw Exception('Firestore batch commit timed out');
         },
       );
-      
+
       // Then handle notifications (fire and forget, don't block UI)
       // Schedule notifications in the background without blocking
       // Temporarily disable notifications to prevent crashes
       // if (notificationTasks.isNotEmpty) {
       //   unawaited(_handleNotificationsSafely(notificationTasks));
       // }
-      
+
+      // Increment receipt scan counter for subscription tracking
+      await SubscriptionService.instance.incrementReceiptScanCount();
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Added ${_preview.length} items')),
@@ -658,7 +673,7 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
 
   void _deleteSelectedItems() {
     if (_selectedItems.isEmpty) return;
-    
+
     final selectedNames = _selectedItems.map((i) => _preview[i].name).join(', ');
     showDialog(
       context: context,
@@ -712,7 +727,7 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
     return Scaffold(
       backgroundColor: _themeService.isDarkMode ? ThemeService.darkBackground : ThemeService.lightBackground,
       appBar: AppBar(
-        title: _isSelectionMode 
+        title: _isSelectionMode
           ? Row(
               children: [
                 Text(
@@ -776,7 +791,7 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
             ),
           ),
         ] : null,
-        leading: _isSelectionMode 
+        leading: _isSelectionMode
           ? IconButton(
               icon: const Icon(Icons.close_rounded, size: 18),
               onPressed: _toggleSelectionMode,
@@ -806,8 +821,8 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
                 style: TextStyle(
                   fontSize: 28,
                   fontWeight: FontWeight.bold,
-                  color: _themeService.isDarkMode 
-                      ? ThemeService.darkTextPrimary 
+                  color: _themeService.isDarkMode
+                      ? ThemeService.darkTextPrimary
                       : const Color(0xFF2C3E50),
                 ),
               ),
@@ -816,8 +831,8 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
                 'Quickly add items to your fridge by scanning receipts',
                 style: TextStyle(
                   fontSize: 16,
-                  color: _themeService.isDarkMode 
-                      ? ThemeService.darkTextSecondary 
+                  color: _themeService.isDarkMode
+                      ? ThemeService.darkTextSecondary
                       : const Color(0xFF7F8C8D),
                 ),
               ),
@@ -858,9 +873,9 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
               ],
             ),
           ),
-        
+
         const SizedBox(height: 16),
-        
+
         // Scan Options Cards
         if (_preview.isEmpty && !_busy && !_isCameraMode) ...[
           Padding(
@@ -894,7 +909,7 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
             ),
           ),
         ],
-        
+
         Expanded(
           child: _isCameraMode
               ? _buildCameraView()
@@ -949,17 +964,17 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
                       ? _buildEmptyState()
                       : _buildItemsList(),
         ),
-        
+
         // Action Buttons
-        if (_preview.isNotEmpty) 
+        if (_preview.isNotEmpty)
           Container(
             margin: const EdgeInsets.only(top: 8),
             padding: EdgeInsets.only(
               left: 20,
               right: 20,
               top: 20,
-              bottom: Platform.isAndroid 
-                  ? MediaQuery.of(context).viewPadding.bottom > 0 
+              bottom: Platform.isAndroid
+                  ? MediaQuery.of(context).viewPadding.bottom > 0
                       ? MediaQuery.of(context).viewPadding.bottom + 8.0  // Add extra padding if there's a navigation bar
                       : 20.0
                   : 20.0,
@@ -1029,9 +1044,9 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: _themeService.isDarkMode 
+              colors: _themeService.isDarkMode
                   ? [
-                      ThemeService.darkCardBackground, 
+                      ThemeService.darkCardBackground,
                       ThemeService.darkCardBackground.withOpacity(0.8)
                     ]
                   : [Colors.white, iconColor.withOpacity(0.05)],
@@ -1075,8 +1090,8 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkTextPrimary 
+                        color: _themeService.isDarkMode
+                            ? ThemeService.darkTextPrimary
                             : const Color(0xFF2C3E50),
                       ),
                     ),
@@ -1085,8 +1100,8 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
                       description,
                       style: TextStyle(
                         fontSize: 14,
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkTextSecondary 
+                        color: _themeService.isDarkMode
+                            ? ThemeService.darkTextSecondary
                             : const Color(0xFF7F8C8D),
                       ),
                     ),
@@ -1096,8 +1111,8 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
               Icon(
                 Icons.arrow_forward_ios_rounded,
                 size: 20,
-                color: _themeService.isDarkMode 
-                    ? ThemeService.darkTextSecondary 
+                color: _themeService.isDarkMode
+                    ? ThemeService.darkTextSecondary
                     : const Color(0xFFBDC3C7),
               ),
             ],
@@ -1218,7 +1233,7 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
             child: CameraPreview(_cameraController!),
           ),
         ),
-        
+
         // Dark overlay with transparent scanning area
         Positioned.fill(
           child: Container(
@@ -1372,7 +1387,7 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
             ),
           ),
         ),
-        
+
         // Overlay with instructions and detected items
         Positioned.fill(
           child: Container(
@@ -1425,9 +1440,9 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
                     ],
                   ),
                 ),
-                
+
                 const Spacer(),
-                
+
                 // Bottom bar with detected items
                 Container(
                   padding: const EdgeInsets.all(16),
@@ -1444,24 +1459,24 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                             decoration: BoxDecoration(
-                              color: _liveDetectedItems.isEmpty 
-                                  ? const Color(0xFF3498DB) 
+                              color: _liveDetectedItems.isEmpty
+                                  ? const Color(0xFF3498DB)
                                   : const Color(0xFF27AE60),
                               borderRadius: BorderRadius.circular(6),
                             ),
                             child: Row(
                               children: [
                                 Icon(
-                                  _liveDetectedItems.isEmpty 
-                                      ? Icons.search_rounded 
+                                  _liveDetectedItems.isEmpty
+                                      ? Icons.search_rounded
                                       : Icons.check_circle,
                                   color: Colors.white,
                                   size: 14,
                                 ),
                                 const SizedBox(width: 4),
                                 Text(
-                                  _liveDetectedItems.isEmpty 
-                                      ? 'SCANNING...' 
+                                  _liveDetectedItems.isEmpty
+                                      ? 'SCANNING...'
                                       : '${_liveDetectedItems.length} FOUND',
                                   style: const TextStyle(
                                     color: Colors.white,
@@ -1546,7 +1561,7 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
             ),
           ),
         ),
-        
+
         // Action buttons
         Positioned(
           bottom: 40,
@@ -1575,7 +1590,7 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
                     onPressed: _exitCameraMode,
                   ),
                 ),
-                
+
                 // Finish button
                 Container(
                   decoration: BoxDecoration(
@@ -1596,8 +1611,8 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
                   child: IconButton(
                     iconSize: 40,
                     icon: Icon(
-                      _liveDetectedItems.isEmpty 
-                          ? Icons.hourglass_empty_rounded 
+                      _liveDetectedItems.isEmpty
+                          ? Icons.hourglass_empty_rounded
                           : Icons.check_rounded,
                       color: Colors.white,
                     ),
@@ -1619,7 +1634,7 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
       itemBuilder: (_, i) {
         final it = _preview[i];
         final isSelected = _selectedItems.contains(i);
-        
+
         return Card(
           margin: const EdgeInsets.only(bottom: 16),
           elevation: 0,
@@ -1628,7 +1643,7 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
           child: Container(
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                colors: _themeService.isDarkMode 
+                colors: _themeService.isDarkMode
                     ? [ThemeService.darkCardBackground, ThemeService.darkCardBackground.withOpacity(0.8)]
                     : [Colors.white, const Color(0xFFF8F9FA)],
                 begin: Alignment.topLeft,
@@ -1636,7 +1651,7 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
               ),
               borderRadius: BorderRadius.circular(20),
               border: Border.all(
-                color: _isSelectionMode && isSelected 
+                color: _isSelectionMode && isSelected
                     ? const Color(0xFF27AE60)
                     : const Color(0xFF27AE60).withOpacity(0.2),
                 width: _isSelectionMode && isSelected ? 2 : 1.5,
@@ -1687,8 +1702,8 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
                             style: TextStyle(
                               fontWeight: FontWeight.bold,
                               fontSize: 16,
-                              color: _themeService.isDarkMode 
-                                  ? ThemeService.darkTextPrimary 
+                              color: _themeService.isDarkMode
+                                  ? ThemeService.darkTextPrimary
                                   : const Color(0xFF2C3E50),
                             ),
                           ),

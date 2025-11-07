@@ -28,7 +28,19 @@ service cloud.firestore {
 
     match /users/{uid} {
       allow read, create: if isAuthed() && isOwner(uid);
-      allow update, delete: if isAuthed() && isOwner(uid);
+
+      // Security: Allow updates but validate subscription changes
+      // Users can update their data, and subscription updates must maintain data integrity
+      allow update: if isAuthed() && isOwner(uid) && (
+        // If updating subscription field, validate the structure
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['subscription']) ||
+        (request.resource.data.subscription is map &&
+         request.resource.data.subscription.tier is string &&
+         request.resource.data.subscription.recipesGeneratedToday is number &&
+         request.resource.data.subscription.lastRecipeGeneratedAt is timestamp)
+      );
+
+      allow delete: if isAuthed() && isOwner(uid);
 
       match /items/{itemId} {
         allow read, write: if isAuthed() && isOwner(uid);

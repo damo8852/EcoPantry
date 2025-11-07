@@ -4,9 +4,12 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/theme_service.dart';
 import '../services/llm_service.dart';
+import '../services/subscription_service.dart';
 import '../models/recipe.dart';
+import '../widgets/upgrade_dialog.dart';
 import 'my_shopping_list_screen.dart';
 import 'recipes_screen.dart';
+import 'paywall_screen.dart';
 
 class ShoppingListHubScreen extends StatefulWidget {
   const ShoppingListHubScreen({super.key});
@@ -17,11 +20,24 @@ class ShoppingListHubScreen extends StatefulWidget {
 
 class _ShoppingListHubScreenState extends State<ShoppingListHubScreen> {
   final ThemeService _themeService = ThemeService();
+  bool _isCheckingAccess = true;
+  bool _hasAccess = false;
 
   @override
   void initState() {
     super.initState();
     _themeService.addListener(_onThemeChanged);
+    _checkShoppingListAccess();
+  }
+
+  Future<void> _checkShoppingListAccess() async {
+    final hasAccess = await SubscriptionService.instance.canAccessShoppingList();
+    if (mounted) {
+      setState(() {
+        _hasAccess = hasAccess;
+        _isCheckingAccess = false;
+      });
+    }
   }
 
   void _onThemeChanged() {
@@ -36,9 +52,38 @@ class _ShoppingListHubScreenState extends State<ShoppingListHubScreen> {
     super.dispose();
   }
 
+  Future<void> _handleUpgrade() async {
+    // Navigate to paywall screen
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const PaywallScreen(),
+      ),
+    );
+  }
+
   Future<void> _generateAIRecipesFromShopping() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
+
+    // Check if user can generate recipes
+    final canGenerate = await SubscriptionService.instance.canGenerateRecipes();
+    if (!canGenerate) {
+      final remaining = await SubscriptionService.instance.getRemainingRecipesToday();
+      if (mounted) {
+        final shouldUpgrade = await showRecipeLimitUpgradeDialog(context, remaining);
+        if (shouldUpgrade) {
+          // Navigate to settings or show upgrade options
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Premium upgrade coming soon! Contact support for early access.'),
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+      }
+      return;
+    }
 
     // Show recipe preferences dialog
     String recipeMode = 'any';
@@ -46,7 +91,7 @@ class _ShoppingListHubScreenState extends State<ShoppingListHubScreen> {
     String recipeKeyword = '';
     String cookingTool = 'any';
     final keywordController = TextEditingController();
-    
+
     final options = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -65,7 +110,7 @@ class _ShoppingListHubScreenState extends State<ShoppingListHubScreen> {
                 Container(
                   padding: const EdgeInsets.all(24),
                   decoration: BoxDecoration(
-                    color: _themeService.isDarkMode 
+                    color: _themeService.isDarkMode
                         ? Colors.white.withOpacity(0.05)
                         : const Color(0xFF3498DB).withOpacity(0.08),
                     borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
@@ -111,7 +156,7 @@ class _ShoppingListHubScreenState extends State<ShoppingListHubScreen> {
                     ],
                   ),
                 ),
-                
+
                 // Content
                 Expanded(
                   child: SingleChildScrollView(
@@ -128,9 +173,9 @@ class _ShoppingListHubScreenState extends State<ShoppingListHubScreen> {
                           {'label': '🥗 Healthy', 'value': 'healthy'},
                           {'label': '⚡ Quick', 'value': 'quick'},
                         ], (value) => setDialogState(() => recipeMode = value)),
-                        
+
                         const SizedBox(height: 20),
-                        
+
                         _buildDialogSection('Cuisine Type', cuisineType, [
                           {'label': 'Any Cuisine', 'value': 'any'},
                           {'label': '🥢 Asian', 'value': 'asian'},
@@ -142,9 +187,9 @@ class _ShoppingListHubScreenState extends State<ShoppingListHubScreen> {
                           {'label': '🍛 Indian', 'value': 'indian'},
                           {'label': '🌶️ Mexican', 'value': 'mexican'},
                         ], (value) => setDialogState(() => cuisineType = value)),
-                        
+
                         const SizedBox(height: 20),
-                        
+
                         _buildDialogSection('Cooking Tool', cookingTool, [
                           {'label': 'Any Tool', 'value': 'any'},
                           {'label': '🍳 Pan/Skillet', 'value': 'pan'},
@@ -155,9 +200,9 @@ class _ShoppingListHubScreenState extends State<ShoppingListHubScreen> {
                           {'label': '🔥 Oven', 'value': 'oven'},
                           {'label': '🍲 Pot', 'value': 'pot'},
                         ], (value) => setDialogState(() => cookingTool = value)),
-                        
+
                         const SizedBox(height: 24),
-                        
+
                         Text(
                           'Recipe Keywords (Optional)',
                           style: TextStyle(
@@ -203,7 +248,7 @@ class _ShoppingListHubScreenState extends State<ShoppingListHubScreen> {
                     ),
                   ),
                 ),
-                
+
                 // Action buttons
                 Container(
                   padding: EdgeInsets.fromLTRB(
@@ -259,7 +304,7 @@ class _ShoppingListHubScreenState extends State<ShoppingListHubScreen> {
     );
 
     if (options == null) return;
-    
+
     final selectedMode = options['recipeMode'] as String;
     final selectedCuisine = options['cuisineType'] as String;
     final keyword = options['keyword'] as String?;
@@ -300,7 +345,7 @@ class _ShoppingListHubScreenState extends State<ShoppingListHubScreen> {
 
     try {
       final db = FirebaseFirestore.instance;
-      
+
       // Get user's shopping list items
       final shoppingSnapshot = await db
           .collection('users')
@@ -355,6 +400,9 @@ class _ShoppingListHubScreenState extends State<ShoppingListHubScreen> {
         cookingTool: selectedCookingTool != null && selectedCookingTool != 'any' ? selectedCookingTool : null,
         dietPreferences: dietPreferences.isNotEmpty ? dietPreferences : null,
       );
+
+      // Increment recipe generation count for free users
+      await SubscriptionService.instance.incrementRecipeCount();
 
       if (!mounted) return;
       Navigator.of(context).pop(); // Close loading dialog
@@ -435,7 +483,7 @@ class _ShoppingListHubScreenState extends State<ShoppingListHubScreen> {
       checkmarkColor: const Color(0xFF3498DB),
       backgroundColor: _themeService.isDarkMode ? ThemeService.darkBackground : Colors.grey[100],
       labelStyle: TextStyle(
-        color: isSelected 
+        color: isSelected
             ? const Color(0xFF3498DB)
             : (_themeService.isDarkMode ? ThemeService.darkTextPrimary : ThemeService.lightTextPrimary),
         fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
@@ -456,26 +504,193 @@ class _ShoppingListHubScreenState extends State<ShoppingListHubScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Show loading state while checking access
+    if (_isCheckingAccess) {
+      return Scaffold(
+        backgroundColor: _themeService.isDarkMode
+            ? ThemeService.darkBackground
+            : ThemeService.lightBackground,
+        appBar: AppBar(
+          title: Text(
+            'Shopping List',
+            style: TextStyle(
+              color: _themeService.isDarkMode
+                  ? ThemeService.darkTextPrimary
+                  : ThemeService.lightTextPrimary,
+            ),
+          ),
+          backgroundColor: _themeService.isDarkMode
+              ? ThemeService.darkBackground
+              : ThemeService.lightBackground,
+          elevation: 0,
+          iconTheme: IconThemeData(
+            color: _themeService.isDarkMode
+                ? ThemeService.darkTextPrimary
+                : ThemeService.lightTextPrimary,
+          ),
+        ),
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    // Show upgrade screen if no access
+    if (!_hasAccess) {
+      return Scaffold(
+        backgroundColor: _themeService.isDarkMode
+            ? ThemeService.darkBackground
+            : ThemeService.lightBackground,
+        appBar: AppBar(
+          title: Text(
+            'Shopping List',
+            style: TextStyle(
+              color: _themeService.isDarkMode
+                  ? ThemeService.darkTextPrimary
+                  : ThemeService.lightTextPrimary,
+            ),
+          ),
+          backgroundColor: _themeService.isDarkMode
+              ? ThemeService.darkBackground
+              : ThemeService.lightBackground,
+          elevation: 0,
+          iconTheme: IconThemeData(
+            color: _themeService.isDarkMode
+                ? ThemeService.darkTextPrimary
+                : ThemeService.lightTextPrimary,
+          ),
+        ),
+        body: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFFFFD700), Color(0xFFFFA500)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                  child: const Icon(
+                    Icons.workspace_premium,
+                    color: Colors.white,
+                    size: 64,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  'Premium Feature',
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    color: _themeService.isDarkMode
+                        ? ThemeService.darkTextPrimary
+                        : const Color(0xFF2C3E50),
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Shopping lists are available with Premium.\nUpgrade now to unlock this feature!',
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: _themeService.isDarkMode
+                        ? ThemeService.darkTextSecondary
+                        : const Color(0xFF7F8C8D),
+                    height: 1.5,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 32),
+
+                // Premium Benefits List
+                _buildBenefitItem(
+                  '✨ Unlimited Recipe Generation',
+                  'Generate as many recipes as you want',
+                ),
+                const SizedBox(height: 16),
+                _buildBenefitItem(
+                  '🛒 Shopping List Access',
+                  'Full access to shopping list features',
+                ),
+                const SizedBox(height: 16),
+                _buildBenefitItem(
+                  '👥 Community Recipes',
+                  'Access and share recipes with the community',
+                ),
+                const SizedBox(height: 16),
+                _buildBenefitItem(
+                  '📸 Unlimited Receipt Scanning',
+                  'Scan as many receipts as you want',
+                ),
+                const SizedBox(height: 16),
+                _buildBenefitItem(
+                  '🎯 Priority Support',
+                  'Get help faster when you need it',
+                ),
+                const SizedBox(height: 16),
+                _buildBenefitItem(
+                  '🚀 Future Features',
+                  'First access to new premium features',
+                ),
+                const SizedBox(height: 32),
+
+                ElevatedButton(
+                  onPressed: _handleUpgrade,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFFFD700),
+                    foregroundColor: const Color(0xFF2C3E50),
+                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: const [
+                      Icon(Icons.workspace_premium, size: 24),
+                      SizedBox(width: 8),
+                      Text(
+                        'Upgrade to Premium',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    // Show shopping list hub for premium users
     return Scaffold(
-      backgroundColor: _themeService.isDarkMode 
-          ? ThemeService.darkBackground 
+      backgroundColor: _themeService.isDarkMode
+          ? ThemeService.darkBackground
           : ThemeService.lightBackground,
       appBar: AppBar(
         title: Text(
           'Shopping List',
           style: TextStyle(
-            color: _themeService.isDarkMode 
-                ? ThemeService.darkTextPrimary 
+            color: _themeService.isDarkMode
+                ? ThemeService.darkTextPrimary
                 : ThemeService.lightTextPrimary,
           ),
         ),
-        backgroundColor: _themeService.isDarkMode 
-            ? ThemeService.darkBackground 
+        backgroundColor: _themeService.isDarkMode
+            ? ThemeService.darkBackground
             : ThemeService.lightBackground,
         elevation: 0,
         iconTheme: IconThemeData(
-          color: _themeService.isDarkMode 
-              ? ThemeService.darkTextPrimary 
+          color: _themeService.isDarkMode
+              ? ThemeService.darkTextPrimary
               : ThemeService.lightTextPrimary,
         ),
       ),
@@ -490,8 +705,8 @@ class _ShoppingListHubScreenState extends State<ShoppingListHubScreen> {
               style: TextStyle(
                 fontSize: 28,
                 fontWeight: FontWeight.bold,
-                color: _themeService.isDarkMode 
-                    ? ThemeService.darkTextPrimary 
+                color: _themeService.isDarkMode
+                    ? ThemeService.darkTextPrimary
                     : const Color(0xFF2C3E50),
               ),
             ),
@@ -500,8 +715,8 @@ class _ShoppingListHubScreenState extends State<ShoppingListHubScreen> {
               'Manage your shopping list and discover new recipes',
               style: TextStyle(
                 fontSize: 16,
-                color: _themeService.isDarkMode 
-                    ? ThemeService.darkTextSecondary 
+                color: _themeService.isDarkMode
+                    ? ThemeService.darkTextSecondary
                     : const Color(0xFF7F8C8D),
               ),
             ),
@@ -558,9 +773,9 @@ class _ShoppingListHubScreenState extends State<ShoppingListHubScreen> {
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: _themeService.isDarkMode 
+              colors: _themeService.isDarkMode
                   ? [
-                      ThemeService.darkCardBackground, 
+                      ThemeService.darkCardBackground,
                       ThemeService.darkCardBackground.withOpacity(0.8)
                     ]
                   : [Colors.white, iconColor.withOpacity(0.05)],
@@ -604,8 +819,8 @@ class _ShoppingListHubScreenState extends State<ShoppingListHubScreen> {
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkTextPrimary 
+                        color: _themeService.isDarkMode
+                            ? ThemeService.darkTextPrimary
                             : const Color(0xFF2C3E50),
                       ),
                     ),
@@ -614,8 +829,8 @@ class _ShoppingListHubScreenState extends State<ShoppingListHubScreen> {
                       description,
                       style: TextStyle(
                         fontSize: 14,
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkTextSecondary 
+                        color: _themeService.isDarkMode
+                            ? ThemeService.darkTextSecondary
                             : const Color(0xFF7F8C8D),
                       ),
                     ),
@@ -625,14 +840,63 @@ class _ShoppingListHubScreenState extends State<ShoppingListHubScreen> {
               Icon(
                 Icons.arrow_forward_ios_rounded,
                 size: 20,
-                color: _themeService.isDarkMode 
-                    ? ThemeService.darkTextSecondary 
+                color: _themeService.isDarkMode
+                    ? ThemeService.darkTextSecondary
                     : const Color(0xFFBDC3C7),
               ),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildBenefitItem(String title, String description) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          margin: const EdgeInsets.only(top: 2),
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFD700).withOpacity(0.15),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: const Icon(
+            Icons.check_circle,
+            color: Color(0xFFFFD700),
+            size: 20,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: TextStyle(
+                  color: _themeService.isDarkMode
+                      ? ThemeService.darkTextPrimary
+                      : const Color(0xFF2C3E50),
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                description,
+                style: TextStyle(
+                  color: _themeService.isDarkMode
+                      ? ThemeService.darkTextSecondary
+                      : const Color(0xFF7F8C8D),
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
