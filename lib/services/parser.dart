@@ -72,7 +72,7 @@ class ReceiptParser {
     print('Raw OCR Text:');
     print(fullText);
     print('==========================');
-    
+
     // Use LLM to extract food items from receipt text
     return await _parseWithLLM(fullText);
   }
@@ -81,23 +81,68 @@ class ReceiptParser {
     try {
       final prompt = _buildExtractionPrompt(receiptText);
       print('LLM Prompt: "$prompt"');
-      
+
       final response = await _callOpenAI(prompt, useJsonMode: true);
       if (response != null && response.trim().isNotEmpty) {
         print('LLM Response: "$response"');
-        final items = await _parseLLMResponse(response);
-        if (items.isNotEmpty) {
-          print('Extracted items: ${items.map((i) => '${i.name} (${i.quantity})').join(', ')}');
-          return items;
-        }
+        var items = await _parseLLMResponse(response);
+          if (items.isNotEmpty) {
+            // Attempt to attach prices found in the raw receipt text to the parsed items
+            items = await _attachPricesToItems(receiptText, items);
+            print('Extracted items: ${items.map((i) => '${i.name} (${i.quantity}) ${i.price ?? ''}').join(', ')}');
+            return items;
+          }
       }
     } catch (e) {
       print('LLM parsing failed: $e');
     }
-    
+
     // Fallback to improved regex parsing
     print('Falling back to improved regex parsing');
     return await _parseWithImprovedRegex(receiptText);
+  }
+
+  /// Try to find price tokens in the receipt text and attach them to the parsed items.
+  static Future<List<ParsedItem>> _attachPricesToItems(String receiptText, List<ParsedItem> items) async {
+    final lines = receiptText.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
+
+    // Price regex capturing optional currency symbol and number with 2 decimals
+    final priceRegex = RegExp(r'(\$|£|€)?\s*(\d{1,3}(?:[.,]\d{2}))');
+
+    // For each line that contains a price, try to match to an item by name tokens
+    for (final line in lines) {
+      final m = priceRegex.firstMatch(line);
+      if (m == null) continue;
+      final sym = m.group(1);
+      final numStr = m.group(2)!.replaceAll(',', '.');
+      final value = double.tryParse(numStr);
+      if (value == null) continue;
+
+      // Try to find an item whose normalized name appears in the line
+      final normalizedLine = _normalizeName(line);
+      ParsedItem? bestMatch;
+      int bestScore = 0;
+
+      for (final it in items) {
+        final normName = _normalizeName(it.name);
+        if (normName.isEmpty) continue;
+        // Score by number of common tokens
+        final tokens = normName.split(' ').where((t) => t.length > 2).toSet();
+        final common = tokens.where((t) => normalizedLine.contains(t)).length;
+        if (common > bestScore) {
+          bestScore = common;
+          bestMatch = it;
+        }
+      }
+
+      if (bestMatch != null && bestScore > 0) {
+        // Attach price to the best matching item (first match wins)
+        final idx = items.indexOf(bestMatch);
+        items[idx] = bestMatch.copyWith(price: value, currency: sym);
+      }
+    }
+
+    return items;
   }
 
   static String _buildExtractionPrompt(String receiptText) {
@@ -129,7 +174,7 @@ Return JSON only: {"items": [{"name": "...", "quantity": 1, "type": "..."}]}''';
     try {
       final configService = ConfigService();
       final apiKey = await configService.getOpenAiApiKey();
-      
+
       if (apiKey == null) {
         print('No OpenAI API key found for receipt parsing');
         return null;
@@ -170,7 +215,7 @@ Return JSON only: {"items": [{"name": "...", "quantity": 1, "type": "..."}]}''';
     } catch (e) {
       print('HTTP request error: $e');
     }
-    
+
     return null;
   }
 
@@ -178,12 +223,12 @@ Return JSON only: {"items": [{"name": "...", "quantity": 1, "type": "..."}]}''';
     try {
       // Clean the response
       var cleanResponse = response.trim();
-      
+
       // Remove any markdown code blocks
       cleanResponse = cleanResponse.replaceAll(RegExp(r'```json\s*|\s*```'), '');
-      
+
       final data = json.decode(cleanResponse);
-      
+
       // Handle new format with "items" key (JSON object)
       List? itemsList;
       if (data is Map<String, dynamic> && data.containsKey('items')) {
@@ -192,7 +237,7 @@ Return JSON only: {"items": [{"name": "...", "quantity": 1, "type": "..."}]}''';
         // Fallback: handle old array format
         itemsList = data;
       }
-      
+
       if (itemsList != null) {
         final items = <ParsedItem>[];
         for (final item in itemsList) {
@@ -200,14 +245,14 @@ Return JSON only: {"items": [{"name": "...", "quantity": 1, "type": "..."}]}''';
             final name = item['name']?.toString();
             final quantity = item['quantity'];
             final type = item['type']?.toString();
-            
+
             if (name != null && name.isNotEmpty) {
               final qty = quantity is int ? quantity : (int.tryParse(quantity?.toString() ?? '1') ?? 1);
               // Clean the name first, then use AI for simplification
               final cleanedName = _cleanAIResponse(name);
               final simplifiedName = await _simplifyFoodNameWithAI(cleanedName) ?? _simplifyFoodName(cleanedName);
               items.add(ParsedItem(
-                name: _titleCase(simplifiedName), 
+                name: _titleCase(simplifiedName),
                 quantity: qty,
                 type: type != null ? GroceryType.fromString(type) : GroceryType.other
               ));
@@ -219,7 +264,7 @@ Return JSON only: {"items": [{"name": "...", "quantity": 1, "type": "..."}]}''';
     } catch (e) {
       print('Failed to parse LLM response as JSON: $e');
     }
-    
+
     return [];
   }
 
@@ -238,7 +283,7 @@ Return JSON only: {"items": [{"name": "...", "quantity": 1, "type": "..."}]}''';
 
       // Skip receipt headers
       if (_receiptHeader.hasMatch(low)) continue;
-      
+
       // Stop at receipt footers
       if (_receiptFooter.hasMatch(low)) break;
 
@@ -270,7 +315,7 @@ Return JSON only: {"items": [{"name": "...", "quantity": 1, "type": "..."}]}''';
       final key = _normalizeName(it.name);
       ParsedItem? existingItem;
       String? existingKey;
-      
+
       // Check for exact match first
       existingItem = merged[key];
       if (existingItem != null) {
@@ -285,7 +330,7 @@ Return JSON only: {"items": [{"name": "...", "quantity": 1, "type": "..."}]}''';
           }
         }
       }
-      
+
       if (existingItem != null && existingKey != null) {
         // Merge with existing item
         merged[existingKey] = existingItem.copyWith(quantity: existingItem.quantity + it.quantity);
@@ -294,10 +339,10 @@ Return JSON only: {"items": [{"name": "...", "quantity": 1, "type": "..."}]}''';
         merged[key] = it;
       }
     }
-    
+
     print('Final parsed items: ${merged.values.map((i) => '${i.name} (${i.quantity})').join(', ')}');
     print('============================');
-    
+
     return merged.values.toList();
   }
 
@@ -306,7 +351,7 @@ Return JSON only: {"items": [{"name": "...", "quantity": 1, "type": "..."}]}''';
     // More aggressive parsing for common receipt patterns
     var name = line;
     int qty = 1;
-    
+
     // Look for quantity patterns more broadly
     final qtyPatterns = [
       RegExp(r'^(\d+)\s*x\s*', caseSensitive: false), // "2x Item"
@@ -315,7 +360,7 @@ Return JSON only: {"items": [{"name": "...", "quantity": 1, "type": "..."}]}''';
       RegExp(r'\s+(\d+)\s*x\s*\$', caseSensitive: false), // "Item 2x$5.99"
       RegExp(r'^(\d+\.\d+)\s+', caseSensitive: false), // "2.19 lbs"
     ];
-    
+
     for (final pattern in qtyPatterns) {
       final match = pattern.firstMatch(name);
       if (match != null) {
@@ -325,10 +370,26 @@ Return JSON only: {"items": [{"name": "...", "quantity": 1, "type": "..."}]}''';
         break;
       }
     }
-    
+
     // Clean up the name by removing various patterns
+    // Try to extract a price token (left or right aligned, with optional currency symbol)
+    double? price;
+    String? currency;
+    final pricePattern = RegExp(r'(?:\b|^)(?:\$|£|€)?\s?(\d{1,3}(?:[.,]\d{2}))(?:\b|$)');
+    final priceMatch = pricePattern.firstMatch(name);
+    if (priceMatch != null) {
+      final raw = priceMatch.group(0) ?? priceMatch.group(1)!;
+      // Attempt to capture currency symbol
+      final symMatch = RegExp(r'(\$|£|€)').firstMatch(raw);
+      if (symMatch != null) currency = symMatch.group(0);
+      var numStr = priceMatch.group(1)!.replaceAll(',', '.');
+      price = double.tryParse(numStr);
+      // Remove the matched price chunk from the name before further cleaning
+      name = name.replaceFirst(raw, '').trim();
+    }
+
     name = _cleanItemNameImproved(name);
-    
+
     // Validate the name - be more lenient if it looks like a food item
     if (!_isValidItemName(name)) {
       // If it looks like a food item but failed validation, try to salvage it
@@ -339,78 +400,78 @@ Return JSON only: {"items": [{"name": "...", "quantity": 1, "type": "..."}]}''';
           name = foodMatch.group(1)!.trim();
         }
       }
-      
+
       // Final validation
       if (!_isValidItemName(name)) return null;
     }
 
     // Use AI for food name simplification, fallback to static mapping
     final simplifiedName = await _simplifyFoodNameWithAI(name) ?? _simplifyFoodName(name);
-    return ParsedItem(name: _titleCase(simplifiedName), quantity: qty);
+    return ParsedItem(name: _titleCase(simplifiedName), quantity: qty, price: price, currency: currency);
   }
 
 
   static String _cleanItemNameImproved(String name) {
     // Remove prices (more comprehensive)
     name = name.replaceAll(RegExp(r'(?<!\d)(?:\$)?\d{1,3}(?:[.,]\d{2})(?!\d)'), '');
-    
+
     // Remove weights and measurements
     name = name.replaceAll(RegExp(r'\b\d+(?:\.\d+)?\s?(?:lb|lbs|oz|kg|g|pt|qt|gal|ml|l)\b', caseSensitive: false), '');
-    
+
     // Remove UPC codes
     name = name.replaceAll(RegExp(r'\b\d{12,13}\b'), '');
-    
+
     // Remove product codes and long digit sequences
     name = name.replaceAll(RegExp(r'#?\b\d{4,}\b'), '');
-    
+
     // Remove brand names and store names (common patterns)
     name = name.replaceAll(RegExp(r'\b(?:Kroger|Heritage Farm|Private Selection|Red Gold|Simple Truth Organic|SOUR PATCH KIDS)\s*[®™]?\s*', caseSensitive: false), '');
-    
+
     // Remove common store abbreviations and noise words
     name = name.replaceAll(RegExp(r'\b(pkg|ea|misc|dept|tpr|promo|ct|pk|lb|oz|each|per|price|sale|discount|coupon|clearance|manager|special|item|coupo|approx|apprax)\b', caseSensitive: false), '');
-    
+
     // Remove "UPC:" prefix
     name = name.replaceAll(RegExp(r'UPC:\s*', caseSensitive: false), '');
-    
+
     // Remove extra whitespace
     name = name.replaceAll(RegExp(r'\s{2,}'), ' ').trim();
-    
+
     // Remove leading/trailing punctuation
     name = name.replaceAll(RegExp(r'^[^\w\s]+|[^\w\s]+$'), '');
-    
+
     return name.trim();
   }
 
 
   static bool _looksLikeItemName(String line) {
     final low = line.toLowerCase();
-    
+
     // Check for common food/grocery keywords
     final foodKeywords = RegExp(r'\b(chicken|beef|cream|broth|grapes|tomatoes|tofu|sandwiches|thighs|ground|whipping|frozen|dairy|dessert|cherry|crushed|organic|soft|silken|watermelon|sour|patch|kids)\b', caseSensitive: false);
-    
+
     // Check for brand names that indicate food items
     final brandKeywords = RegExp(r'\b(heritage|farm|kroger|private|selection|red|gold|simple|truth|organic)\b', caseSensitive: false);
-    
+
     // Check for food-related measurements
     final foodMeasurements = RegExp(r'\b(lb|lbs|oz|pt|qt|gal|ct|pint|pound|ounce|count)\b', caseSensitive: false);
-    
+
     return foodKeywords.hasMatch(low) || brandKeywords.hasMatch(low) || foodMeasurements.hasMatch(low);
   }
 
   static bool _isValidItemName(String name) {
     if (name.isEmpty) return false;
-    
+
     // Must have at least 2 alphabetic characters
     final alphaCount = RegExp(r'[A-Za-z]').allMatches(name).length;
     if (alphaCount < 2) return false;
-    
+
     // Must not be mostly numbers or symbols
     final alphaRatio = alphaCount / name.length;
     if (alphaRatio < 0.2) return false; // More lenient
-    
+
     // Must not be too short or too long
     if (name.length < 2 || name.length > 100) return false; // More lenient
-    
+
     return true;
   }
 
@@ -443,25 +504,25 @@ Return JSON only: {"items": [{"name": "...", "quantity": 1, "type": "..."}]}''';
     'legs': 'leg',
     'wngs': 'wing',
     'wings': 'wing',
-    
+
     // Beef
     'grnd': 'ground',
     'bf': 'beef',
     'stk': 'steak',
     'chp': 'chop',
     'chops': 'chop',
-    
+
     // Pork
     'ham': 'ham',
     'bcn': 'bacon',
-    
+
     // Dairy
     'milk': 'milk',
     'chz': 'cheese',
     'yog': 'yogurt',
     'cream': 'cream',
     'butter': 'butter',
-    
+
     // Vegetables
     'veg': 'vegetable',
     'veggie': 'vegetable',
@@ -473,7 +534,7 @@ Return JSON only: {"items": [{"name": "...", "quantity": 1, "type": "..."}]}''';
     'carrots': 'carrot',
     'peppers': 'pepper',
     'cucumbers': 'cucumber',
-    
+
     // Fruits
     'apples': 'apple',
     'bananas': 'banana',
@@ -482,13 +543,13 @@ Return JSON only: {"items": [{"name": "...", "quantity": 1, "type": "..."}]}''';
     'berries': 'berry',
     'strawberries': 'strawberry',
     'blueberries': 'blueberry',
-    
+
     // Grains
     'bread': 'bread',
     'rice': 'rice',
     'pasta': 'pasta',
     'noodles': 'noodle',
-    
+
     // Seafood
     'fish': 'fish',
     'salmon': 'salmon',
@@ -496,18 +557,18 @@ Return JSON only: {"items": [{"name": "...", "quantity": 1, "type": "..."}]}''';
     'shrimp': 'shrimp',
     'crab': 'crab',
     'lobster': 'lobster',
-    
+
     // Beverages
     'juice': 'juice',
     'soda': 'soda',
     'water': 'water',
     'beer': 'beer',
     'wine': 'wine',
-    
+
     // Frozen
     'ice cream': 'ice cream',
     'frozen': 'frozen',
-    
+
     // Condiments
     'sauce': 'sauce',
     'ketchup': 'ketchup',
@@ -518,7 +579,7 @@ Return JSON only: {"items": [{"name": "...", "quantity": 1, "type": "..."}]}''';
     'spice': 'spice',
     'herb': 'herb',
     'herbs': 'herb',
-    
+
     // Snacks
     'chips': 'chip',
     'crackers': 'cracker',
@@ -532,13 +593,13 @@ Return JSON only: {"items": [{"name": "...", "quantity": 1, "type": "..."}]}''';
     try {
       final prompt = _buildFoodSimplificationPrompt(name);
       final response = await _callOpenAI(prompt);
-      
+
       if (response != null && response.trim().isNotEmpty) {
         String simplified = response.trim();
-        
+
         // Clean up any verbose responses
         simplified = _cleanAIResponse(simplified);
-        
+
         // Validate that we got a reasonable response
         if (simplified.length > 1 && simplified.length < 100) {
           return simplified.toLowerCase();
@@ -547,7 +608,7 @@ Return JSON only: {"items": [{"name": "...", "quantity": 1, "type": "..."}]}''';
     } catch (e) {
       print('AI food simplification failed for "$name": $e');
     }
-    
+
     return null; // Fallback to static mapping
   }
 
@@ -555,21 +616,21 @@ Return JSON only: {"items": [{"name": "...", "quantity": 1, "type": "..."}]}''';
   static String _cleanAIResponse(String response) {
     // Remove explanations in parentheses
     response = response.replaceAll(RegExp(r'\([^)]*\)'), '').trim();
-    
+
     // Remove arrows and explanations
     response = response.replaceAll(RegExp(r'\s*→\s*.*'), '').trim();
     response = response.replaceAll(RegExp(r'\s*->\s*.*'), '').trim();
-    
+
     // Remove quotes if the entire response is quoted
     if (response.startsWith('"') && response.endsWith('"')) {
       response = response.substring(1, response.length - 1);
     }
-    
+
     // Remove "no changes needed" type explanations
     response = response.replaceAll(RegExp(r'no changes needed.*', caseSensitive: false), '').trim();
     response = response.replaceAll(RegExp(r'already clear.*', caseSensitive: false), '').trim();
     response = response.replaceAll(RegExp(r'already readable.*', caseSensitive: false), '').trim();
-    
+
     return response.trim();
   }
 
@@ -587,24 +648,24 @@ Examples:
   /// Static mapping fallback for food name simplification
   static String _simplifyFoodName(String name) {
     String simplified = name.toLowerCase();
-    
+
     // Remove common brand names
     final brandNames = ['fever tree', 'haas', 'kroger', 'heritage farm', 'organic', 'fresh', 'simple truth', 'private selection'];
     for (String brand in brandNames) {
       simplified = simplified.replaceAll(brand, '').trim();
     }
-    
+
     // Split into words and simplify each word
     List<String> words = simplified.split(' ');
     List<String> simplifiedWords = [];
-    
+
     for (String word in words) {
       // Remove common suffixes and clean up
       String cleanWord = word.replaceAll(RegExp(r'[^a-z]'), '');
-      
+
       // Skip empty words
       if (cleanWord.isEmpty) continue;
-      
+
       // Check if it's an abbreviation we know
       if (_foodAbbreviations.containsKey(cleanWord)) {
         simplifiedWords.add(_foodAbbreviations[cleanWord]!);
@@ -613,40 +674,40 @@ Examples:
         simplifiedWords.add(cleanWord);
       }
     }
-    
+
     return simplifiedWords.join(' ');
   }
 
   static bool _areSimilarFoodItems(String name1, String name2) {
     final normalized1 = _normalizeName(name1);
     final normalized2 = _normalizeName(name2);
-    
+
     // Exact match after normalization
     if (normalized1 == normalized2) return true;
-    
+
     // Check if one contains the other (e.g., "avocados" vs "organic avocados")
     if (normalized1.contains(normalized2) || normalized2.contains(normalized1)) {
       return true;
     }
-    
+
     // Check for common food item patterns
     final words1 = normalized1.split(' ');
     final words2 = normalized2.split(' ');
-    
+
     // If they share significant words, they might be the same item
     final commonWords = words1.where((word) => words2.contains(word) && word.length > 2).length;
     final totalWords = (words1.length + words2.length) / 2;
-    
+
     // If more than 50% of words are common, consider them similar
     if (commonWords / totalWords > 0.5) return true;
-    
+
     // Check for brand vs generic items (e.g., "Kroger avocados" vs "avocados")
     final brandWords = ['kroger', 'heritage', 'farm', 'private', 'selection', 'simple', 'truth', 'organic', 'red', 'gold'];
     final cleanWords1 = words1.where((word) => !brandWords.contains(word)).toList();
     final cleanWords2 = words2.where((word) => !brandWords.contains(word)).toList();
-    
+
     if (cleanWords1.join(' ') == cleanWords2.join(' ')) return true;
-    
+
     return false;
   }
 }
@@ -655,9 +716,21 @@ class ParsedItem {
   final String name;
   final int quantity;
   final GroceryType type;
-  ParsedItem({required this.name, required this.quantity, this.type = GroceryType.other});
-  ParsedItem copyWith({String? name, int? quantity, GroceryType? type}) =>
-      ParsedItem(name: name ?? this.name, quantity: quantity ?? this.quantity, type: type ?? this.type);
+  /// Optional price per unit extracted from the receipt (in local currency units)
+  final double? price;
+  /// Optional currency symbol detected (e.g. "$", "£", "€") or ISO code if available
+  final String? currency;
+
+  ParsedItem({required this.name, required this.quantity, this.type = GroceryType.other, this.price, this.currency});
+
+  ParsedItem copyWith({String? name, int? quantity, GroceryType? type, double? price, String? currency}) =>
+      ParsedItem(
+        name: name ?? this.name,
+        quantity: quantity ?? this.quantity,
+        type: type ?? this.type,
+        price: price ?? this.price,
+        currency: currency ?? this.currency,
+      );
 }
 
 /// Barcode → product name mapping (local fallback)

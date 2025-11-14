@@ -46,11 +46,21 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
 
       if (!mounted) return;
 
+      // Compute aggregate saved amount and currency for display
+      double totalSaved = 0.0;
+      String currencySymbol = '';
+      for (final doc in finishedItems.docs) {
+        final data = doc.data();
+        final saved = (data['savedAmount'] is num) ? (data['savedAmount'] as num).toDouble() : 0.0;
+        totalSaved += saved;
+        if (currencySymbol.isEmpty && data['currency'] != null) currencySymbol = data['currency'].toString();
+      }
+
       showModalBottomSheet(
         context: context,
         isScrollControlled: true,
-        backgroundColor: _themeService.isDarkMode 
-            ? ThemeService.darkCard 
+        backgroundColor: _themeService.isDarkMode
+            ? ThemeService.darkCard
             : ThemeService.lightCard,
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -87,20 +97,35 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkTextPrimary 
+                        color: _themeService.isDarkMode
+                            ? ThemeService.darkTextPrimary
                             : ThemeService.lightTextPrimary,
                       ),
                     ),
                     const Spacer(),
-                    Text(
-                      '${finishedItems.docs.length}',
-                      style: TextStyle(
-                        fontSize: 16,
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkTextSecondary 
-                            : ThemeService.lightTextSecondary,
-                      ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          '${finishedItems.docs.length}',
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: _themeService.isDarkMode
+                                ? ThemeService.darkTextSecondary
+                                : ThemeService.lightTextSecondary,
+                          ),
+                        ),
+                        if (totalSaved > 0)
+                          Text(
+                            'Saved ${currencySymbol.isNotEmpty ? currencySymbol : '\$'}${totalSaved.toStringAsFixed(2)}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: _themeService.isDarkMode
+                                  ? ThemeService.darkTextSecondary
+                                  : ThemeService.lightTextSecondary,
+                            ),
+                          ),
+                      ],
                     ),
                   ],
                 ),
@@ -115,8 +140,8 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
                             Icon(
                               Icons.check_circle_outline_rounded,
                               size: 80,
-                              color: _themeService.isDarkMode 
-                                  ? ThemeService.darkTextSecondary 
+                              color: _themeService.isDarkMode
+                                  ? ThemeService.darkTextSecondary
                                   : ThemeService.lightTextSecondary,
                             ),
                             const SizedBox(height: 16),
@@ -124,8 +149,8 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
                               'No finished items yet',
                               style: TextStyle(
                                 fontSize: 18,
-                                color: _themeService.isDarkMode 
-                                    ? ThemeService.darkTextSecondary 
+                                color: _themeService.isDarkMode
+                                    ? ThemeService.darkTextSecondary
                                     : ThemeService.lightTextSecondary,
                               ),
                             ),
@@ -141,11 +166,13 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
                           final data = item.data();
                           final name = data['name'] ?? 'Unknown';
                           final finishedAt = data['finishedAt'] as Timestamp?;
-                          
+
+                          final savedAmount = (data['savedAmount'] is num) ? (data['savedAmount'] as num).toDouble() : 0.0;
+
                           return Card(
                             margin: const EdgeInsets.only(bottom: 8),
-                            color: _themeService.isDarkMode 
-                                ? ThemeService.darkCardBackground 
+                            color: _themeService.isDarkMode
+                                ? ThemeService.darkCardBackground
                                 : Colors.white,
                             child: ListTile(
                               leading: const Icon(
@@ -155,22 +182,35 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
                               title: Text(
                                 name,
                                 style: TextStyle(
-                                  color: _themeService.isDarkMode 
-                                      ? ThemeService.darkTextPrimary 
+                                  color: _themeService.isDarkMode
+                                      ? ThemeService.darkTextPrimary
                                       : ThemeService.lightTextPrimary,
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
-                              subtitle: finishedAt != null
-                                  ? Text(
+                              subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  if (finishedAt != null)
+                                    Text(
                                       'Finished on ${_formatDate(finishedAt.toDate())}',
                                       style: TextStyle(
-                                        color: _themeService.isDarkMode 
-                                            ? ThemeService.darkTextSecondary 
+                                        color: _themeService.isDarkMode
+                                            ? ThemeService.darkTextSecondary
                                             : ThemeService.lightTextSecondary,
                                       ),
-                                    )
-                                  : null,
+                                    ),
+                                  if (savedAmount > 0)
+                                    Text(
+                                      'Saved ${data['currency'] ?? '\$'}${savedAmount.toStringAsFixed(2)}',
+                                      style: TextStyle(
+                                        color: _themeService.isDarkMode
+                                            ? ThemeService.darkTextSecondary
+                                            : ThemeService.lightTextSecondary,
+                                      ),
+                                    ),
+                                ],
+                              ),
                             ),
                           );
                         },
@@ -206,8 +246,8 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
       showModalBottomSheet(
         context: context,
         isScrollControlled: true,
-        backgroundColor: _themeService.isDarkMode 
-            ? ThemeService.darkCard 
+        backgroundColor: _themeService.isDarkMode
+            ? ThemeService.darkCard
             : ThemeService.lightCard,
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -244,8 +284,8 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkTextPrimary 
+                        color: _themeService.isDarkMode
+                            ? ThemeService.darkTextPrimary
                             : ThemeService.lightTextPrimary,
                       ),
                     ),
@@ -254,8 +294,8 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
                       '${frozenItems.docs.length}',
                       style: TextStyle(
                         fontSize: 16,
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkTextSecondary 
+                        color: _themeService.isDarkMode
+                            ? ThemeService.darkTextSecondary
                             : ThemeService.lightTextSecondary,
                       ),
                     ),
@@ -272,8 +312,8 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
                             Icon(
                               Icons.ac_unit_rounded,
                               size: 80,
-                              color: _themeService.isDarkMode 
-                                  ? ThemeService.darkTextSecondary 
+                              color: _themeService.isDarkMode
+                                  ? ThemeService.darkTextSecondary
                                   : ThemeService.lightTextSecondary,
                             ),
                             const SizedBox(height: 16),
@@ -281,8 +321,8 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
                               'No frozen items',
                               style: TextStyle(
                                 fontSize: 18,
-                                color: _themeService.isDarkMode 
-                                    ? ThemeService.darkTextSecondary 
+                                color: _themeService.isDarkMode
+                                    ? ThemeService.darkTextSecondary
                                     : ThemeService.lightTextSecondary,
                               ),
                             ),
@@ -298,11 +338,11 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
                           final data = item.data();
                           final name = data['name'] ?? 'Unknown';
                           final expiry = data['expiry'] as Timestamp?;
-                          
+
                           return Card(
                             margin: const EdgeInsets.only(bottom: 8),
-                            color: _themeService.isDarkMode 
-                                ? ThemeService.darkCardBackground 
+                            color: _themeService.isDarkMode
+                                ? ThemeService.darkCardBackground
                                 : Colors.white,
                             child: ListTile(
                               leading: const Icon(
@@ -312,8 +352,8 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
                               title: Text(
                                 name,
                                 style: TextStyle(
-                                  color: _themeService.isDarkMode 
-                                      ? ThemeService.darkTextPrimary 
+                                  color: _themeService.isDarkMode
+                                      ? ThemeService.darkTextPrimary
                                       : ThemeService.lightTextPrimary,
                                   fontWeight: FontWeight.w600,
                                 ),
@@ -322,8 +362,8 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
                                   ? Text(
                                       'Expires on ${_formatDate(expiry.toDate())}',
                                       style: TextStyle(
-                                        color: _themeService.isDarkMode 
-                                            ? ThemeService.darkTextSecondary 
+                                        color: _themeService.isDarkMode
+                                            ? ThemeService.darkTextSecondary
                                             : ThemeService.lightTextSecondary,
                                       ),
                                     )
@@ -354,7 +394,7 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
                                           ],
                                         ),
                                       );
-                                      
+
                                       if (confirmed == true) {
                                         await item.reference.delete();
                                         if (context.mounted) {
@@ -404,19 +444,19 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
         ..sort((a, b) {
           final aTime = a.data()['prioritizedAt'] as Timestamp?;
           final bTime = b.data()['prioritizedAt'] as Timestamp?;
-          
+
           if (aTime == null && bTime == null) return 0;
           if (aTime == null) return 1;
           if (bTime == null) return -1;
-          
+
           return bTime.compareTo(aTime);
         });
 
       showModalBottomSheet(
         context: context,
         isScrollControlled: true,
-        backgroundColor: _themeService.isDarkMode 
-            ? ThemeService.darkCard 
+        backgroundColor: _themeService.isDarkMode
+            ? ThemeService.darkCard
             : ThemeService.lightCard,
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -453,8 +493,8 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkTextPrimary 
+                        color: _themeService.isDarkMode
+                            ? ThemeService.darkTextPrimary
                             : ThemeService.lightTextPrimary,
                       ),
                     ),
@@ -463,8 +503,8 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
                       '${sortedItems.length}',
                       style: TextStyle(
                         fontSize: 16,
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkTextSecondary 
+                        color: _themeService.isDarkMode
+                            ? ThemeService.darkTextSecondary
                             : ThemeService.lightTextSecondary,
                       ),
                     ),
@@ -481,8 +521,8 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
                             Icon(
                               Icons.priority_high_rounded,
                               size: 80,
-                              color: _themeService.isDarkMode 
-                                  ? ThemeService.darkTextSecondary 
+                              color: _themeService.isDarkMode
+                                  ? ThemeService.darkTextSecondary
                                   : ThemeService.lightTextSecondary,
                             ),
                             const SizedBox(height: 16),
@@ -490,8 +530,8 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
                               'No prioritized items',
                               style: TextStyle(
                                 fontSize: 18,
-                                color: _themeService.isDarkMode 
-                                    ? ThemeService.darkTextSecondary 
+                                color: _themeService.isDarkMode
+                                    ? ThemeService.darkTextSecondary
                                     : ThemeService.lightTextSecondary,
                               ),
                             ),
@@ -507,11 +547,11 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
                           final data = item.data();
                           final name = data['name'] ?? 'Unknown';
                           final expiry = data['expiry'] as Timestamp?;
-                          
+
                           return Card(
                             margin: const EdgeInsets.only(bottom: 8),
-                            color: _themeService.isDarkMode 
-                                ? ThemeService.darkCardBackground 
+                            color: _themeService.isDarkMode
+                                ? ThemeService.darkCardBackground
                                 : Colors.white,
                             child: ListTile(
                               leading: const Icon(
@@ -521,8 +561,8 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
                               title: Text(
                                 name,
                                 style: TextStyle(
-                                  color: _themeService.isDarkMode 
-                                      ? ThemeService.darkTextPrimary 
+                                  color: _themeService.isDarkMode
+                                      ? ThemeService.darkTextPrimary
                                       : ThemeService.lightTextPrimary,
                                   fontWeight: FontWeight.w600,
                                 ),
@@ -531,8 +571,8 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
                                   ? Text(
                                       'Expires on ${_formatDate(expiry.toDate())}',
                                       style: TextStyle(
-                                        color: _themeService.isDarkMode 
-                                            ? ThemeService.darkTextSecondary 
+                                        color: _themeService.isDarkMode
+                                            ? ThemeService.darkTextSecondary
                                             : ThemeService.lightTextSecondary,
                                       ),
                                     )
@@ -563,7 +603,7 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
                                           ],
                                         ),
                                       );
-                                      
+
                                       if (confirmed == true) {
                                         await item.reference.delete();
                                         if (context.mounted) {
@@ -598,36 +638,36 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
   String _formatDate(DateTime date) {
     final now = DateTime.now();
     final diff = date.difference(now);
-    
+
     if (diff.inDays == 0) return 'Today';
     if (diff.inDays == 1) return 'Tomorrow';
     if (diff.inDays == -1) return 'Yesterday';
-    
+
     return '${date.month}/${date.day}/${date.year}';
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _themeService.isDarkMode 
-          ? ThemeService.darkBackground 
+      backgroundColor: _themeService.isDarkMode
+          ? ThemeService.darkBackground
           : ThemeService.lightBackground,
       appBar: AppBar(
         title: Text(
           'Collections',
           style: TextStyle(
-            color: _themeService.isDarkMode 
-                ? ThemeService.darkTextPrimary 
+            color: _themeService.isDarkMode
+                ? ThemeService.darkTextPrimary
                 : ThemeService.lightTextPrimary,
           ),
         ),
-        backgroundColor: _themeService.isDarkMode 
-            ? ThemeService.darkBackground 
+        backgroundColor: _themeService.isDarkMode
+            ? ThemeService.darkBackground
             : ThemeService.lightBackground,
         elevation: 0,
         iconTheme: IconThemeData(
-          color: _themeService.isDarkMode 
-              ? ThemeService.darkTextPrimary 
+          color: _themeService.isDarkMode
+              ? ThemeService.darkTextPrimary
               : ThemeService.lightTextPrimary,
         ),
       ),
@@ -642,8 +682,8 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
               style: TextStyle(
                 fontSize: 28,
                 fontWeight: FontWeight.bold,
-                color: _themeService.isDarkMode 
-                    ? ThemeService.darkTextPrimary 
+                color: _themeService.isDarkMode
+                    ? ThemeService.darkTextPrimary
                     : const Color(0xFF2C3E50),
               ),
             ),
@@ -652,8 +692,8 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
               'View finished, frozen, or priority items',
               style: TextStyle(
                 fontSize: 16,
-                color: _themeService.isDarkMode 
-                    ? ThemeService.darkTextSecondary 
+                color: _themeService.isDarkMode
+                    ? ThemeService.darkTextSecondary
                     : const Color(0xFF7F8C8D),
               ),
             ),
@@ -717,9 +757,9 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: _themeService.isDarkMode 
+              colors: _themeService.isDarkMode
                   ? [
-                      ThemeService.darkCardBackground, 
+                      ThemeService.darkCardBackground,
                       ThemeService.darkCardBackground.withOpacity(0.8)
                     ]
                   : [Colors.white, iconColor.withOpacity(0.05)],
@@ -763,8 +803,8 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkTextPrimary 
+                        color: _themeService.isDarkMode
+                            ? ThemeService.darkTextPrimary
                             : const Color(0xFF2C3E50),
                       ),
                     ),
@@ -773,8 +813,8 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
                       description,
                       style: TextStyle(
                         fontSize: 14,
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkTextSecondary 
+                        color: _themeService.isDarkMode
+                            ? ThemeService.darkTextSecondary
                             : const Color(0xFF7F8C8D),
                       ),
                     ),
@@ -784,8 +824,8 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
               Icon(
                 Icons.arrow_forward_ios_rounded,
                 size: 20,
-                color: _themeService.isDarkMode 
-                    ? ThemeService.darkTextSecondary 
+                color: _themeService.isDarkMode
+                    ? ThemeService.darkTextSecondary
                     : const Color(0xFFBDC3C7),
               ),
             ],

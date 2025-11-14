@@ -344,6 +344,28 @@ class _SettingsPageState extends State<SettingsPage> {
                         ),
                       ),
 
+                      // Money saved indicator
+                      const SizedBox(height: 12),
+                      Builder(builder: (context) {
+                        final user = _auth.currentUser;
+                        if (user == null) return const SizedBox.shrink();
+                        return FutureBuilder<DocumentSnapshot>(
+                          future: _db.collection('users').doc(user.uid).get(),
+                          builder: (context, snap) {
+                            if (!snap.hasData) return const SizedBox.shrink();
+                            final data = snap.data!.data() as Map<String, dynamic>? ?? {};
+                            final saved = (data['moneySaved'] is num) ? (data['moneySaved'] as num).toDouble() : 0.0;
+                            return Text(
+                              '💰 Money saved: ${saved.toStringAsFixed(2)}',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary,
+                              ),
+                            );
+                          },
+                        );
+                      }),
+
                       // Debug: Testing buttons
                       const SizedBox(height: 12),
                       Row(

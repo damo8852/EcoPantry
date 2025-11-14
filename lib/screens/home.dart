@@ -35,13 +35,13 @@ class _HomePageState extends State<HomePage> {
   bool _isMultiSelectMode = false;
   Set<String> _selectedItems = {};
   bool _isFabMenuOpen = false;
-  
+
   // Sorting options
   String _sortOption = 'expiry_asc';
-  
+
   // Must contain filter
   String _mustContainText = '';
-  
+
   // Search filter
   String _searchText = '';
   bool _showFrozenItems = false;
@@ -102,9 +102,51 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  /// Extract a numeric unit price from various stored representations.
+  /// Returns `null` when price cannot be parsed.
+  double? _extractPrice(dynamic price) {
+    if (price == null) return null;
+    // If numeric already, return as double
+    if (price is num) return price.toDouble();
+
+    // If the price was stored as a map/object (e.g. {'amount': 1.23, 'currency':'USD'})
+    if (price is Map) {
+      if (price['amount'] is num) return (price['amount'] as num).toDouble();
+      if (price['amount'] is String) {
+        final parsed = double.tryParse((price['amount'] as String).replaceAll(',', ''));
+        if (parsed != null) return parsed;
+      }
+    }
+
+    // If string, try to extract a number (handles $1.23, 1,23, 1.23 USD, etc.)
+    if (price is String) {
+      var s = price.trim();
+      if (s.isEmpty) return null;
+
+      // Remove common currency symbols and letters, keep digits, dot and comma and minus
+      // Then prefer dot as decimal separator.
+      // Examples: "$1.23" -> "1.23"  "1,234.56" -> "1234.56"  "1,23" -> "1.23"
+      // First, find the first numeric token in the string
+      final match = RegExp(r'-?\d+[\d,\.]*').firstMatch(s);
+      if (match == null) return null;
+      var token = match.group(0)!;
+      // If contains both comma and dot, assume comma is thousands separator -> remove commas
+      if (token.contains(',') && token.contains('.')) token = token.replaceAll(',', '');
+      // If contains only commas (e.g. "1,23"), replace comma with dot for decimal
+      else if (token.contains(',') && !token.contains('.')) token = token.replaceAll(',', '.');
+      // Remove any remaining non-digit/dot/minus
+      token = token.replaceAll(RegExp(r'[^0-9\.-]'), '');
+
+      return double.tryParse(token);
+    }
+
+    // Could not parse
+    return null;
+  }
+
   void _deleteSelectedItems() async {
     if (_selectedItems.isEmpty) return;
-    
+
     // Show confirmation dialog
     final confirmed = await showDialog<bool>(
       context: context,
@@ -126,9 +168,9 @@ class _HomePageState extends State<HomePage> {
         ],
       ),
     );
-    
+
     if (confirmed != true) return;
-    
+
     // Store deleted items data for undo
     final deletedItems = <String, Map<String, dynamic>>{};
     for (final itemId in _selectedItems) {
@@ -138,14 +180,14 @@ class _HomePageState extends State<HomePage> {
         deletedItems[itemId] = docSnapshot.data() as Map<String, dynamic>;
       }
     }
-    
+
     // Delete items
     final batch = _db.batch();
     for (final itemId in _selectedItems) {
       final docRef = _db.collection('users').doc(user.uid).collection('items').doc(itemId);
       batch.delete(docRef);
     }
-    
+
     try {
       await batch.commit();
       final deletedCount = _selectedItems.length;
@@ -194,7 +236,7 @@ class _HomePageState extends State<HomePage> {
 
   void _finishSelectedItems() async {
     if (_selectedItems.isEmpty) return;
-    
+
     // Show confirmation dialog
     final confirmed = await showDialog<bool>(
       context: context,
@@ -216,49 +258,81 @@ class _HomePageState extends State<HomePage> {
         ],
       ),
     );
-    
+
     if (confirmed != true) return;
-    
+
     // Store finished items data and IDs for undo
     final finishedItemsData = <String, Map<String, dynamic>>{};
     final finishedItemsIds = <String, String>{}; // maps original item ID to finished_items doc ID
-    
+
     final batch = _db.batch();
     final user = _auth.currentUser!;
-    
+
     for (final itemId in _selectedItems) {
       final docRef = _db.collection('users').doc(user.uid).collection('items').doc(itemId);
-      
+
       // Get the item data first
       final docSnapshot = await docRef.get();
       if (docSnapshot.exists) {
         final data = docSnapshot.data() as Map<String, dynamic>;
         finishedItemsData[itemId] = data;
-        
+
         // Move to finished_items collection
         final finishedItemsRef = _db
             .collection('users')
             .doc(user.uid)
             .collection('finished_items')
             .doc();
-        
+
         finishedItemsIds[itemId] = finishedItemsRef.id;
-        
-        batch.set(finishedItemsRef, {
+
+  // Compute saved amount if price exists
+  final unitPriceNum = _extractPrice(data['price']);
+        final qtyNum = data['quantity'] is num ? (data['quantity'] as num).toDouble() : 1.0;
+        final savedAmount = (unitPriceNum != null) ? (unitPriceNum * qtyNum) : 0.0;
+
+        final finishedDocData = {
           'name': data['name'],
           'quantity': data['quantity'],
           'groceryType': data['groceryType'],
           'finishedAt': FieldValue.serverTimestamp(),
           'originalExpiryDate': data['expiryDate'],
-        });
-        
+          'savedAmount': savedAmount,
+        };
+        if (unitPriceNum != null) finishedDocData['price'] = unitPriceNum;
+        if (data['currency'] != null) finishedDocData['currency'] = data['currency'];
+
+        // Keep savedAmount in the local map for undo and later aggregation
+        finishedItemsData[itemId] = {...data, 'savedAmount': savedAmount};
+
+        batch.set(finishedItemsRef, finishedDocData);
+
         // Delete from main collection
         batch.delete(docRef);
       }
     }
-    
+
     try {
       await batch.commit();
+
+      // Aggregate total saved amount across the finished items we just created
+      double totalSaved = 0.0;
+      String currencySymbol = '';
+      for (final v in finishedItemsData.values) {
+        final saved = (v['savedAmount'] is num) ? (v['savedAmount'] as num).toDouble() : 0.0;
+        totalSaved += saved;
+        if (currencySymbol.isEmpty && v['currency'] != null) {
+          currencySymbol = v['currency'].toString();
+        }
+      }
+
+      // Update user's aggregate saved amount (atomic increment)
+      if (totalSaved > 0) {
+        await _db.collection('users').doc(user.uid).set({
+          'moneySaved': FieldValue.increment(totalSaved),
+        }, SetOptions(merge: true));
+      }
+
       final finishedCount = _selectedItems.length;
       setState(() {
         _selectedItems.clear();
@@ -266,10 +340,11 @@ class _HomePageState extends State<HomePage> {
         _isMultiSelectMode = false;
       });
       if (mounted) {
+        final savedLabel = totalSaved > 0 ? ' — Saved ${currencySymbol.isNotEmpty ? currencySymbol : '\$'}${totalSaved.toStringAsFixed(2)}' : '';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Finished $finishedCount items'),
-            duration: const Duration(seconds: 3),
+            content: Text('Finished $finishedCount items$savedLabel'),
+            duration: const Duration(seconds: 4),
             action: SnackBarAction(
               label: 'Undo',
               onPressed: () async {
@@ -278,11 +353,11 @@ class _HomePageState extends State<HomePage> {
                 for (final entry in finishedItemsData.entries) {
                   final itemId = entry.key;
                   final data = entry.value;
-                  
+
                   // Restore to main collection
                   final docRef = _db.collection('users').doc(user.uid).collection('items').doc(itemId);
                   undoBatch.set(docRef, data);
-                  
+
                   // Remove from finished_items
                   final finishedDocId = finishedItemsIds[itemId];
                   if (finishedDocId != null) {
@@ -295,6 +370,14 @@ class _HomePageState extends State<HomePage> {
                   }
                 }
                 await undoBatch.commit();
+
+                // Decrement the user's aggregate saved amount if we previously incremented
+                if (totalSaved > 0) {
+                  await _db.collection('users').doc(user.uid).set({
+                    'moneySaved': FieldValue.increment(-totalSaved),
+                  }, SetOptions(merge: true));
+                }
+
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(content: Text('Restored $finishedCount items')),
@@ -319,10 +402,10 @@ class _HomePageState extends State<HomePage> {
 
   void _freezeSelectedItems() async {
     if (_selectedItems.isEmpty) return;
-    
+
     final batch = _db.batch();
     final user = _auth.currentUser!;
-    
+
     for (final itemId in _selectedItems) {
       final docRef = _db.collection('users').doc(user.uid).collection('items').doc(itemId);
       final docSnapshot = await docRef.get();
@@ -336,7 +419,7 @@ class _HomePageState extends State<HomePage> {
         });
       }
     }
-    
+
     try {
       await batch.commit();
       final frozenCount = _selectedItems.length;
@@ -367,10 +450,10 @@ class _HomePageState extends State<HomePage> {
 
   void _unfreezeSelectedItems() async {
     if (_selectedItems.isEmpty) return;
-    
+
     final batch = _db.batch();
     final user = _auth.currentUser!;
-    
+
     for (final itemId in _selectedItems) {
       final docRef = _db.collection('users').doc(user.uid).collection('items').doc(itemId);
       final docSnapshot = await docRef.get();
@@ -381,17 +464,17 @@ class _HomePageState extends State<HomePage> {
           'isFrozen': false,
           'unfrozenAt': FieldValue.serverTimestamp(),
         };
-        
+
         // If there's an original expiry date stored, restore it
         if (data['originalExpiryDate'] != null) {
           updates['expiryDate'] = data['originalExpiryDate'];
           updates['originalExpiryDate'] = FieldValue.delete(); // Remove the stored original date
         }
-        
+
         batch.update(docRef, updates);
       }
     }
-    
+
     try {
       await batch.commit();
       final unfrozenCount = _selectedItems.length;
@@ -440,7 +523,7 @@ class _HomePageState extends State<HomePage> {
 
   bool _hasFrozenSelectedItems() {
     if (_selectedItems.isEmpty || _currentSortedDocs == null) return false;
-    
+
     for (final doc in _currentSortedDocs!) {
       if (_selectedItems.contains(doc.id)) {
         final data = doc.data();
@@ -460,7 +543,7 @@ class _HomePageState extends State<HomePage> {
         'frozenAt': FieldValue.serverTimestamp(),
         'originalExpiryDate': data['expiryDate'], // Store original expiry date
       });
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -488,15 +571,15 @@ class _HomePageState extends State<HomePage> {
         'isFrozen': false,
         'unfrozenAt': FieldValue.serverTimestamp(),
       };
-      
+
       // If there's an original expiry date stored, restore it
       if (data['originalExpiryDate'] != null) {
         updates['expiryDate'] = data['originalExpiryDate'];
         updates['originalExpiryDate'] = FieldValue.delete(); // Remove the stored original date
       }
-      
+
       await ref.update(updates);
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -545,7 +628,7 @@ class _HomePageState extends State<HomePage> {
 
   String _getFilterDisplayText() {
     final parts = <String>[];
-    
+
     // Frozen items status
     if (_showFrozenItems) {
       parts.add('Only Frozen');
@@ -554,24 +637,24 @@ class _HomePageState extends State<HomePage> {
     } else {
       parts.add('Show All');
     }
-    
+
     // Category filters
     if (_selectedFilters.isNotEmpty) {
       parts.add('${_selectedFilters.length} Categories');
     }
-    
+
     // Text search
     if (_mustContainText.isNotEmpty) {
       parts.add('contains "$_mustContainText"');
     }
-    
+
     parts.add(_getSortDisplayName(_sortOption));
     return parts.join(' • ');
   }
 
   String _capitalizeWords(String text) {
     if (text.isEmpty) return text;
-    
+
     return text.split(' ').map((word) {
       if (word.isEmpty) return word;
       return word[0].toUpperCase() + word.substring(1).toLowerCase();
@@ -928,12 +1011,12 @@ class _HomePageState extends State<HomePage> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
-            color: option.isSelected 
+            color: option.isSelected
                 ? option.color.withOpacity(0.1)
                 : Colors.transparent,
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
-              color: option.isSelected 
+              color: option.isSelected
                   ? option.color
                   : (_themeService.isDarkMode ? ThemeService.darkBorder : ThemeService.lightBorder),
               width: 1,
@@ -951,7 +1034,7 @@ class _HomePageState extends State<HomePage> {
               Text(
                 option.label,
                 style: TextStyle(
-                  color: option.isSelected 
+                  color: option.isSelected
                       ? option.color
                       : (_themeService.isDarkMode ? ThemeService.darkTextPrimary : ThemeService.lightTextPrimary),
                   fontSize: 12,
@@ -972,7 +1055,7 @@ class _HomePageState extends State<HomePage> {
     return List.from(items)..sort((a, b) {
       final dataA = a.data();
       final dataB = b.data();
-      
+
       switch (_sortOption) {
         case 'expiry_asc':
           final expiryA = (dataA['expiryDate'] as Timestamp?)?.toDate();
@@ -981,7 +1064,7 @@ class _HomePageState extends State<HomePage> {
           if (expiryA == null) return 1;
           if (expiryB == null) return -1;
           return expiryA.compareTo(expiryB);
-          
+
         case 'expiry_desc':
           final expiryA = (dataA['expiryDate'] as Timestamp?)?.toDate();
           final expiryB = (dataB['expiryDate'] as Timestamp?)?.toDate();
@@ -989,33 +1072,33 @@ class _HomePageState extends State<HomePage> {
           if (expiryA == null) return -1;
           if (expiryB == null) return 1;
           return expiryB.compareTo(expiryA);
-          
+
         case 'name_asc':
           return (dataA['name'] ?? '').toString().toLowerCase()
               .compareTo((dataB['name'] ?? '').toString().toLowerCase());
-              
+
         case 'name_desc':
           return (dataB['name'] ?? '').toString().toLowerCase()
               .compareTo((dataA['name'] ?? '').toString().toLowerCase());
-              
+
         case 'quantity_asc':
           final qtyA = (dataA['quantity'] ?? 0) as num;
           final qtyB = (dataB['quantity'] ?? 0) as num;
           return qtyA.compareTo(qtyB);
-          
+
         case 'quantity_desc':
           final qtyA = (dataA['quantity'] ?? 0) as num;
           final qtyB = (dataB['quantity'] ?? 0) as num;
           return qtyB.compareTo(qtyA);
-          
+
         case 'type_asc':
           return (dataA['groceryType'] ?? 'other').toString()
               .compareTo((dataB['groceryType'] ?? 'other').toString());
-              
+
         case 'type_desc':
           return (dataB['groceryType'] ?? 'other').toString()
               .compareTo((dataA['groceryType'] ?? 'other').toString());
-              
+
         default:
           return 0;
       }
@@ -1157,7 +1240,7 @@ class _HomePageState extends State<HomePage> {
                   children: [
                     Icon(
                       Icons.check_circle_rounded,
-                      color: _selectedItems.isEmpty 
+                      color: _selectedItems.isEmpty
                           ? (_themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary)
                           : (_themeService.isDarkMode ? const Color(0xFF81C784) : const Color(0xFF27AE60)),
                     ),
@@ -1173,7 +1256,7 @@ class _HomePageState extends State<HomePage> {
                   children: [
                     Icon(
                       Icons.priority_high_rounded,
-                      color: _selectedItems.isEmpty 
+                      color: _selectedItems.isEmpty
                           ? (_themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary)
                           : (_themeService.isDarkMode ? const Color(0xFFE57373) : const Color(0xFFE74C3C)),
                     ),
@@ -1189,7 +1272,7 @@ class _HomePageState extends State<HomePage> {
                   children: [
                     Icon(
                       Icons.ac_unit_rounded,
-                      color: _selectedItems.isEmpty 
+                      color: _selectedItems.isEmpty
                           ? (_themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary)
                           : (_themeService.isDarkMode ? const Color(0xFF7BB3F0) : const Color(0xFF00BCD4)),
                     ),
@@ -1221,7 +1304,7 @@ class _HomePageState extends State<HomePage> {
                   children: [
                     Icon(
                       Icons.delete_rounded,
-                      color: _selectedItems.isEmpty 
+                      color: _selectedItems.isEmpty
                           ? (_themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary)
                           : (_themeService.isDarkMode ? const Color(0xFFE57373) : const Color(0xFFE74C3C)),
                     ),
@@ -1263,15 +1346,16 @@ class _HomePageState extends State<HomePage> {
         ],
       ),
       drawer: Drawer(
-        backgroundColor: _themeService.isDarkMode 
-            ? ThemeService.darkBackground 
+        backgroundColor: _themeService.isDarkMode
+            ? ThemeService.darkBackground
             : ThemeService.lightBackground,
         child: SafeArea(
-          child: Column(
+          child: ListView(
+            padding: const EdgeInsets.symmetric(vertical: 8),
             children: [
-            // Custom header - simplified without background
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+              // Custom header - simplified without background
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
                 child: Row(
                   children: [
                     // Logo/Icon
@@ -1297,9 +1381,7 @@ class _HomePageState extends State<HomePage> {
                           Text(
                             'EcoPantry',
                             style: TextStyle(
-                              color: _themeService.isDarkMode 
-                                  ? ThemeService.darkTextPrimary 
-                                  : ThemeService.lightTextPrimary,
+                              color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : ThemeService.lightTextPrimary,
                               fontSize: 20,
                               fontWeight: FontWeight.bold,
                               letterSpacing: 0.5,
@@ -1309,9 +1391,7 @@ class _HomePageState extends State<HomePage> {
                           Text(
                             'Reduce waste, save the planet',
                             style: TextStyle(
-                              color: _themeService.isDarkMode 
-                                  ? ThemeService.darkTextSecondary 
-                                  : ThemeService.lightTextSecondary,
+                              color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary,
                               fontSize: 11,
                               fontWeight: FontWeight.w400,
                             ),
@@ -1322,225 +1402,205 @@ class _HomePageState extends State<HomePage> {
                   ],
                 ),
               ),
-            
-            // Menu items
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.symmetric(vertical: 1),
-                children: [
-                  // Carbon Impact Section Header
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
-                    child: Text(
-                      'IMPACT',
-                      style: TextStyle(
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkTextSecondary 
-                            : ThemeService.lightTextSecondary,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 1.2,
-                      ),
-                    ),
-                  ),
-                  
-                  // Carbon Savings Card
-                  _buildCarbonSavingsCard(),
-                  
-                  const SizedBox(height: 8),
-                  
-                  // App Section Header
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
-                    child: Text(
-                      'APP',
-                      style: TextStyle(
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkTextSecondary 
-                            : ThemeService.lightTextSecondary,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 1.2,
-                      ),
-                    ),
-                  ),
-                  
-                  // Recipes
-                  _buildDrawerItem(
-                    icon: Icons.restaurant_menu_rounded,
-                    title: 'Recipes',
-                    subtitle: 'Create, save & discover recipes',
-                    iconColor: const Color(0xFFE67E22),
-                    onTap: () {
-                      Navigator.pop(context);
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const RecipesHubScreen()),
-                      );
-                    },
-                  ),
-                  
-                  // Shopping List
-                  _buildDrawerItem(
-                    icon: Icons.shopping_cart_rounded,
-                    title: 'Shopping List',
-                    subtitle: 'Manage your shopping list & find recipes',
-                    iconColor: const Color(0xFF3498DB),
-                    onTap: () {
-                      Navigator.pop(context);
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const ShoppingListHubScreen()),
-                      );
-                    },
-                  ),
-                  
-                  // Collections
-                  _buildDrawerItem(
-                    icon: Icons.collections_rounded,
-                    title: 'Collections',
-                    subtitle: 'View finished, frozen, or priority items',
-                    iconColor: const Color(0xFF9B59B6),
-                    onTap: () {
-                      Navigator.pop(context);
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const CollectionsScreen()),
-                      );
-                    },
-                  ),
-                  
-                  // Settings
-                  _buildDrawerItem(
-                    icon: Icons.settings_rounded,
-                    title: 'Settings',
-                    subtitle: 'App preferences & configuration',
-                    iconColor: const Color(0xFF4A90E2),
-                    onTap: () {
-                      Navigator.pop(context);
-                      Navigator.pushNamed(context, '/settings');
-                    },
-                  ),
-                  
-                  const Divider(height: 32, indent: 24, endIndent: 24),
-                  
-                  // Account Section
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
-                    child: Text(
-                      'ACCOUNT',
-                      style: TextStyle(
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkTextSecondary 
-                            : ThemeService.lightTextSecondary,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 1.2,
-                      ),
-                    ),
-                  ),
-                  
-                  // User info
-                  _buildDrawerItem(
-                    icon: Icons.person_rounded,
-                    title: user.isAnonymous ? 'Guest User' : (user.displayName ?? 'User'),
-                    subtitle: user.email ?? 'Not signed in',
-                    iconColor: const Color(0xFF9B59B6),
-                    onTap: null,
-                  ),
-                  
-                  // Logout
-                  _buildDrawerItem(
-                    icon: Icons.logout_rounded,
-                    title: 'Logout',
-                    subtitle: 'Sign out of your account',
-                    iconColor: const Color(0xFFE74C3C),
-                    onTap: () async {
-                      Navigator.pop(context);
-                      final confirmed = await showDialog<bool>(
-                        context: context,
-                        builder: (context) => AlertDialog(
-                          title: const Text('Logout'),
-                          content: const Text('Are you sure you want to logout?'),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.of(context).pop(false),
-                              child: const Text('Cancel'),
-                            ),
-                            FilledButton(
-                              onPressed: () => Navigator.of(context).pop(true),
-                              style: FilledButton.styleFrom(
-                                backgroundColor: const Color(0xFFE74C3C),
-                              ),
-                              child: const Text('Logout'),
-                            ),
-                          ],
-                        ),
-                      );
-                      
-                      if (confirmed == true) {
-                        await AuthService.instance.signOut();
-                        if (mounted) {
-                          Navigator.of(context).pushAndRemoveUntil(
-                            MaterialPageRoute(builder: (context) => const AuthGate()),
-                            (route) => false,
-                          );
-                        }
-                      }
-                    },
-                  ),
-                ],
-              ),
-            ),
-            
-            // Footer
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                border: Border(
-                  top: BorderSide(
-                    color: _themeService.isDarkMode 
-                        ? ThemeService.darkBorder 
-                        : ThemeService.lightBorder,
-                    width: 1,
+
+              const SizedBox(height: 8),
+
+              // APP header
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 4, 24, 0),
+                child: Text(
+                  'APP',
+                  style: TextStyle(
+                    color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 1.2,
                   ),
                 ),
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(
-                    Icons.eco_rounded,
-                    size: 16,
-                    color: Color(0xFF27AE60),
-                  ),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(
-                      'Making a difference, one meal at a time',
-                      textAlign: TextAlign.center,
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 2,
-                      style: TextStyle(
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkTextSecondary 
-                            : ThemeService.lightTextSecondary,
-                        fontSize: 12,
-                        fontStyle: FontStyle.italic,
-                      ),
+
+              // Recipes
+              _buildDrawerItem(
+                icon: Icons.restaurant_menu_rounded,
+                title: 'Recipes',
+                subtitle: 'Create, save & discover recipes',
+                iconColor: const Color(0xFFE67E22),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const RecipesHubScreen()));
+                },
+              ),
+
+              // Shopping List
+              _buildDrawerItem(
+                icon: Icons.shopping_cart_rounded,
+                title: 'Shopping List',
+                subtitle: 'Manage your shopping list & find recipes',
+                iconColor: const Color(0xFF3498DB),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const ShoppingListHubScreen()));
+                },
+              ),
+
+              // Collections
+              _buildDrawerItem(
+                icon: Icons.collections_rounded,
+                title: 'Collections',
+                subtitle: 'View finished, frozen, or priority items',
+                iconColor: const Color(0xFF9B59B6),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const CollectionsScreen()));
+                },
+              ),
+
+              // Settings
+              _buildDrawerItem(
+                icon: Icons.settings_rounded,
+                title: 'Settings',
+                subtitle: 'App preferences & configuration',
+                iconColor: const Color(0xFF4A90E2),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.pushNamed(context, '/settings');
+                },
+              ),
+
+              const SizedBox(height: 8),
+
+              // Account header
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 4, 24, 0),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'ACCOUNT',
+                    style: TextStyle(
+                      color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 1.2,
                     ),
                   ),
-                ],
+                ),
               ),
-            ),
-          ],
+
+              // User info
+              _buildDrawerItem(
+                icon: Icons.person_rounded,
+                title: user.isAnonymous ? 'Guest User' : (user.displayName ?? 'User'),
+                subtitle: user.email ?? 'Not signed in',
+                iconColor: const Color(0xFF9B59B6),
+                onTap: null,
+              ),
+
+              // Logout
+              _buildDrawerItem(
+                icon: Icons.logout_rounded,
+                title: 'Logout',
+                subtitle: 'Sign out of your account',
+                iconColor: const Color(0xFFE74C3C),
+                onTap: () async {
+                  Navigator.pop(context);
+                  final confirmed = await showDialog<bool>(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: const Text('Logout'),
+                      content: const Text('Are you sure you want to logout?'),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.of(context).pop(false),
+                          child: const Text('Cancel'),
+                        ),
+                        FilledButton(
+                          onPressed: () => Navigator.of(context).pop(true),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: const Color(0xFFE74C3C),
+                          ),
+                          child: const Text('Logout'),
+                        ),
+                      ],
+                    ),
+                  );
+
+                  if (confirmed == true) {
+                    await AuthService.instance.signOut();
+                    if (mounted) {
+                      Navigator.of(context).pushAndRemoveUntil(
+                        MaterialPageRoute(builder: (context) => const AuthGate()),
+                        (route) => false,
+                      );
+                    }
+                  }
+                },
+              ),
+
+              // Impact header and Carbon card
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 4, 24, 0),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'IMPACT',
+                    style: TextStyle(
+                      color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: _buildCarbonSavingsCard(),
+              ),
+
+              // Footer message
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  border: Border(
+                    top: BorderSide(
+                      color: _themeService.isDarkMode ? ThemeService.darkBorder : ThemeService.lightBorder,
+                      width: 1,
+                    ),
+                  ),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(
+                      Icons.eco_rounded,
+                      size: 16,
+                      color: Color(0xFF27AE60),
+                    ),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        'Making a difference, one meal at a time',
+                        textAlign: TextAlign.center,
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 2,
+                        style: TextStyle(
+                          color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary,
+                          fontSize: 12,
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       ),
       floatingActionButton: Padding(
         padding: EdgeInsets.only(
-          bottom: Platform.isAndroid 
-              ? MediaQuery.of(context).viewPadding.bottom > 0 
+          bottom: Platform.isAndroid
+              ? MediaQuery.of(context).viewPadding.bottom > 0
                   ? 8.0  // Add extra padding if there's a navigation bar
                   : 0.0
               : 0.0,
@@ -1776,7 +1836,7 @@ class _HomePageState extends State<HomePage> {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(16),
                 gradient: LinearGradient(
-                  colors: _isFabMenuOpen 
+                  colors: _isFabMenuOpen
                       ? [const Color(0xFFE74C3C), const Color(0xFFC0392B)]
                       : [const Color(0xFF4A90E2), const Color(0xFF357ABD)],
                   begin: Alignment.topLeft,
@@ -1832,11 +1892,11 @@ class _HomePageState extends State<HomePage> {
                   return const Center(child: CircularProgressIndicator());
                 }
                 final docs = snap.data!.docs;
-                
+
                 // Filter items by frozen status, grocery type, must contain text, and search
                 final filteredDocs = docs.where((doc) {
                   final data = doc.data();
-                  
+
                   // Filter frozen items based on filter settings
                   final isFrozen = data['isFrozen'] == true;
                   if (_showFrozenItems) {
@@ -1847,7 +1907,7 @@ class _HomePageState extends State<HomePage> {
                     if (isFrozen) return false;
                   }
                   // If neither flag is set, show all items (including frozen)
-                  
+
                   // Check grocery type filter
                   if (_selectedFilters.isNotEmpty) {
                     final groceryType = GroceryType.fromString(data['groceryType'] ?? 'other');
@@ -1855,7 +1915,7 @@ class _HomePageState extends State<HomePage> {
                       return false;
                     }
                   }
-                  
+
                   // Check search text (prioritize over mustContainText)
                   final searchQuery = _searchText.isNotEmpty ? _searchText : _mustContainText;
                   if (searchQuery.isNotEmpty) {
@@ -1864,16 +1924,16 @@ class _HomePageState extends State<HomePage> {
                       return false;
                     }
                   }
-                  
+
                   return true;
                 }).toList();
 
                 // Sort the filtered items
                 final sortedDocs = _sortItems(filteredDocs);
-                
+
                 // Store current sorted docs for select all functionality
                 _currentSortedDocs = sortedDocs;
-                
+
                 return CustomScrollView(
                   slivers: [
                     // Welcome section
@@ -1882,7 +1942,7 @@ class _HomePageState extends State<HomePage> {
                         margin: const EdgeInsets.fromLTRB(16, 24, 16, 16),
                         padding: const EdgeInsets.all(20),
                         decoration: BoxDecoration(
-                          gradient: _themeService.isDarkMode 
+                          gradient: _themeService.isDarkMode
                             ? const LinearGradient(
                                 colors: [Color(0xFF2C3E50), Color(0xFF34495E)],
                                 begin: Alignment.topLeft,
@@ -1931,7 +1991,7 @@ class _HomePageState extends State<HomePage> {
                         ),
                       ),
                     ),
-                    
+
                     // Search Bar
                     SliverToBoxAdapter(
                       child: Container(
@@ -1961,7 +2021,7 @@ class _HomePageState extends State<HomePage> {
                               Icons.search_rounded,
                               color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary,
                             ),
-                            suffixIcon: _searchText.isNotEmpty 
+                            suffixIcon: _searchText.isNotEmpty
                               ? IconButton(
                                   icon: Icon(
                                     Icons.clear_rounded,
@@ -1976,7 +2036,7 @@ class _HomePageState extends State<HomePage> {
                         ),
                       ),
                     ),
-                    
+
                     // Filter Button
                     SliverToBoxAdapter(
                       child: Container(
@@ -2032,7 +2092,7 @@ class _HomePageState extends State<HomePage> {
                         ),
                       ),
                     ),
-                    
+
                     // Items list or empty state
                     if (docs.isEmpty)
                       SliverFillRemaining(
@@ -2062,13 +2122,13 @@ class _HomePageState extends State<HomePage> {
                           final groceryType = GroceryType.fromString(data['groceryType'] ?? 'other');
                           final itemId = sortedDocs[i].id;
                           final isSelected = _selectedItems.contains(itemId);
-                          
+
                           return Container(
                             margin: const EdgeInsets.symmetric(horizontal: 16),
                             decoration: BoxDecoration(
                               color: _themeService.isDarkMode ? ThemeService.darkCardBackground : ThemeService.lightCardBackground,
                               borderRadius: BorderRadius.circular(16),
-                              border: _isSelectionMode && isSelected 
+                              border: _isSelectionMode && isSelected
                                 ? Border.all(color: const Color(0xFF27AE60), width: 2)
                                 : null,
                               boxShadow: [
@@ -2079,7 +2139,7 @@ class _HomePageState extends State<HomePage> {
                                 ),
                               ],
                             ),
-                            child: _isSelectionMode 
+                            child: _isSelectionMode
                               ? ListTile(
                                   leading: Checkbox(
                                     value: isSelected,
@@ -2125,35 +2185,53 @@ class _HomePageState extends State<HomePage> {
                                     // Store item data for undo
                                     final docSnapshot = await ref.get();
                                     if (!docSnapshot.exists) return;
-                                    
+
                                     final data = docSnapshot.data() as Map<String, dynamic>;
                                     final itemName = (data['name'] ?? 'Unknown').toString();
                                     final user = _auth.currentUser!;
                                     final itemId = ref.id;
-                                    
+
                                     // Move to finished_items collection
                                     final finishedItemsRef = _db
                                         .collection('users')
                                         .doc(user.uid)
                                         .collection('finished_items')
                                         .doc();
-                                    
-                                    await finishedItemsRef.set({
+
+                                    // Compute saved amount if price exists
+                                    final unitPriceNum = _extractPrice(data['price']);
+                                    final qtyNum = data['quantity'] is num ? (data['quantity'] as num).toDouble() : 1.0;
+                                    final savedAmount = (unitPriceNum != null) ? (unitPriceNum * qtyNum) : 0.0;
+
+                                    final finishedDoc = {
                                       'name': data['name'],
                                       'quantity': data['quantity'],
                                       'groceryType': data['groceryType'],
                                       'finishedAt': FieldValue.serverTimestamp(),
                                       'originalExpiryDate': data['expiryDate'],
-                                    });
-                                    
+                                      'savedAmount': savedAmount,
+                                    };
+                                    if (unitPriceNum != null) finishedDoc['price'] = unitPriceNum;
+                                    if (data['currency'] != null) finishedDoc['currency'] = data['currency'];
+
+                                    await finishedItemsRef.set(finishedDoc);
+
                                     // Delete from main collection
                                     await ref.delete();
-                                    
+
+                                    // Increment user's aggregate saved amount
+                                    if (savedAmount > 0) {
+                                      await _db.collection('users').doc(user.uid).set({
+                                        'moneySaved': FieldValue.increment(savedAmount),
+                                      }, SetOptions(merge: true));
+                                    }
+
                                     // Show undo snackbar
                                     if (mounted) {
+                                      final savedLabel = savedAmount > 0 ? ' — Saved ${data['currency'] ?? '\$'}${savedAmount.toStringAsFixed(2)}' : '';
                                       ScaffoldMessenger.of(context).showSnackBar(
                                         SnackBar(
-                                          content: Text('Finished "$itemName"'),
+                                          content: Text('Finished "' + itemName + '"' + savedLabel),
                                           duration: const Duration(seconds: 3),
                                           action: SnackBarAction(
                                             label: 'Undo',
@@ -2161,10 +2239,18 @@ class _HomePageState extends State<HomePage> {
                                               // Restore to main collection
                                               final docRef = _db.collection('users').doc(user.uid).collection('items').doc(itemId);
                                               await docRef.set(data);
-                                              
+
                                               // Remove from finished_items
                                               await finishedItemsRef.delete();
-                                              
+
+
+                                              // Decrement user's aggregate saved amount if we incremented
+                                              if (savedAmount > 0) {
+                                                await _db.collection('users').doc(user.uid).set({
+                                                  'moneySaved': FieldValue.increment(-savedAmount),
+                                                }, SetOptions(merge: true));
+                                              }
+
                                               if (mounted) {
                                                 ScaffoldMessenger.of(context).showSnackBar(
                                                   SnackBar(content: Text('Restored "$itemName"')),
@@ -2180,14 +2266,14 @@ class _HomePageState extends State<HomePage> {
                                     // Store item data for undo
                                     final docSnapshot = await ref.get();
                                     if (!docSnapshot.exists) return;
-                                    
+
                                     final data = docSnapshot.data() as Map<String, dynamic>;
                                     final itemName = (data['name'] ?? 'Unknown').toString();
                                     final itemId = ref.id;
-                                    
+
                                     // Delete the item
                                     await ref.delete();
-                                    
+
                                     // Show undo snackbar
                                     if (mounted) {
                                       ScaffoldMessenger.of(context).showSnackBar(
@@ -2200,7 +2286,7 @@ class _HomePageState extends State<HomePage> {
                                               // Restore the item
                                               final docRef = _db.collection('users').doc(user.uid).collection('items').doc(itemId);
                                               await docRef.set(data);
-                                              
+
                                               if (mounted) {
                                                 ScaffoldMessenger.of(context).showSnackBar(
                                                   SnackBar(content: Text('Restored "$itemName"')),
@@ -2236,7 +2322,7 @@ class _HomePageState extends State<HomePage> {
                         },
                       ),
                       ),
-                    
+
                     // Bottom padding for FAB
                     const SliverToBoxAdapter(
                       child: SizedBox(height: 120),
@@ -2297,11 +2383,11 @@ Input: $input''';
         if (response.statusCode == 200) {
           final data = json.decode(response.body);
           final result = data['choices']?[0]?['message']?['content']?.toString().trim();
-          
+
           if (result != null) {
             final parsed = json.decode(result);
             final items = parsed['items'] as List?;
-            
+
             if (items != null && items.isNotEmpty) {
               // Check for existing items
               final existingItems = await _db
@@ -2309,33 +2395,33 @@ Input: $input''';
                   .doc(user.uid)
                   .collection('items')
                   .get();
-              
+
               final existingNames = existingItems.docs
                   .map((doc) => (doc.data()['name'] ?? '').toString().toLowerCase())
                   .toSet();
-              
+
               final batch = _db.batch();
               int addedCount = 0;
               final skippedItems = <String>[];
-              
+
               for (final item in items) {
                 final rawName = item['name']?.toString().trim() ?? '';
                 if (rawName.isEmpty) continue;
-                
+
                 // Capitalize the name (title case)
                 final name = _capitalizeWords(rawName);
-                
+
                 // Skip duplicates
                 if (existingNames.contains(name.toLowerCase())) {
                   skippedItems.add(name);
                   continue;
                 }
-                
+
                 final quantity = item['quantity'] as int? ?? 1;
                 final days = item['days'] as int? ?? 5;
                 final type = item['type']?.toString() ?? 'other';
                 final expiry = DateTime.now().add(Duration(days: days));
-                
+
                 final ref = _db.collection('users').doc(user.uid).collection('items').doc();
                 batch.set(ref, {
                   'name': name,
@@ -2346,7 +2432,7 @@ Input: $input''';
                   'updatedAt': FieldValue.serverTimestamp(),
                   'source': 'manual',
                 });
-                
+
                 // Try to schedule notification (non-blocking - don't fail if permissions aren't granted)
                 try {
                   await NotificationsService.instance.scheduleExpiryReminder(
@@ -2359,12 +2445,12 @@ Input: $input''';
                   print('Failed to schedule notification for $name: $e');
                   // Continue anyway - item should still be added even if notification fails
                 }
-                
+
                 addedCount++;
               }
-              
+
               await batch.commit();
-              
+
               if (mounted) {
                 String message = 'Added $addedCount item(s)';
                 if (skippedItems.isNotEmpty) {
@@ -2515,8 +2601,8 @@ Input: $input''';
                         },
                         icon: const Icon(Icons.calendar_month),
                         label: Text(
-                          expiry.year >= 9000 
-                              ? 'Never Expires' 
+                          expiry.year >= 9000
+                              ? 'Never Expires'
                               : 'Expires ${expiry.toLocal().toString().split(' ').first}'
                         ),
                       ),
@@ -2564,7 +2650,7 @@ Input: $input''';
 
   Future<void> _prioritizeItem(DocumentReference<Map<String, dynamic>> ref, Map<String, dynamic> data) async {
     final itemName = (data['name'] ?? 'Unknown').toString();
-    
+
     // Show confirmation dialog
     final confirmed = await showDialog<bool>(
       context: context,
@@ -2586,16 +2672,16 @@ Input: $input''';
         ],
       ),
     );
-    
+
     if (confirmed != true) return;
-    
+
     // Add priority flag to the item
     await ref.update({
       'isPrioritized': true,
       'prioritizedAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
-    
+
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -2664,7 +2750,7 @@ Input: $input''';
 
   Future<void> _unprioritizeItem(DocumentReference<Map<String, dynamic>> ref, Map<String, dynamic> data) async {
     final itemName = (data['name'] ?? 'Unknown').toString();
-    
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -2764,8 +2850,8 @@ Input: $input''';
                     Text(
                       title,
                       style: TextStyle(
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkTextPrimary 
+                        color: _themeService.isDarkMode
+                            ? ThemeService.darkTextPrimary
                             : ThemeService.lightTextPrimary,
                         fontSize: 15,
                         fontWeight: FontWeight.w600,
@@ -2775,8 +2861,8 @@ Input: $input''';
                     Text(
                       subtitle,
                       style: TextStyle(
-                        color: _themeService.isDarkMode 
-                            ? ThemeService.darkTextSecondary 
+                        color: _themeService.isDarkMode
+                            ? ThemeService.darkTextSecondary
                             : ThemeService.lightTextSecondary,
                         fontSize: 12,
                       ),
@@ -2787,8 +2873,8 @@ Input: $input''';
               if (onTap != null)
                 Icon(
                   Icons.chevron_right_rounded,
-                  color: _themeService.isDarkMode 
-                      ? ThemeService.darkTextSecondary 
+                  color: _themeService.isDarkMode
+                      ? ThemeService.darkTextSecondary
                       : ThemeService.lightTextSecondary,
                   size: 20,
                 ),
@@ -2819,34 +2905,54 @@ Input: $input''';
       builder: (context, snapshot) {
         double carbonSaved = 0.0;
         int itemsFinished = 0;
-        
+        double moneySaved = 0.0;
+        String currencySymbol = '\$';
+
         if (snapshot.hasData) {
           itemsFinished = snapshot.data!.docs.length;
           for (var doc in snapshot.data!.docs) {
             final data = doc.data();
             final quantity = (data['quantity'] ?? 1) as num;
             final groceryType = data['groceryType'] ?? 'other';
-            
+
             double carbonPerKg = _getCarbonFootprint(groceryType);
             carbonSaved += quantity * carbonPerKg * 0.5; // Assume average 0.5kg per item
+
+            // Aggregate money saved: prefer explicit savedAmount, otherwise compute from price * qty
+            double thisSaved = 0.0;
+            if (data['savedAmount'] is num) {
+              thisSaved = (data['savedAmount'] as num).toDouble();
+            } else if (data['price'] != null) {
+              final unit = _extractPrice(data['price']);
+              final qty = (data['quantity'] is num) ? (data['quantity'] as num).toDouble() : 1.0;
+              if (unit != null) thisSaved = unit * qty;
+            }
+            moneySaved += thisSaved;
+
+            // Try to capture a currency symbol if present in the finished item
+            if ((data['currency'] != null) && (currencySymbol == '\$')) {
+              try {
+                final c = data['currency'].toString();
+                if (c.isNotEmpty) currencySymbol = c;
+              } catch (_) {}
+            }
           }
         }
-        
+
         return Container(
-          margin: const EdgeInsets.symmetric(horizontal: 24),
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
             gradient: const LinearGradient(
               colors: [Color(0xFF27AE60), Color(0xFF2ECC71)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(12),
             boxShadow: [
               BoxShadow(
-                color: const Color(0xFF27AE60).withOpacity(0.3),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
+                color: const Color(0xFF27AE60).withOpacity(0.25),
+                blurRadius: 8,
+                offset: const Offset(0, 3),
               ),
             ],
           ),
@@ -2863,7 +2969,7 @@ Input: $input''';
                     child: const Icon(
                       Icons.eco_rounded,
                       color: Colors.white,
-                      size: 20,
+                      size: 18,
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -2890,7 +2996,7 @@ Input: $input''';
                         _formatCarbonValue(carbonSaved),
                         style: const TextStyle(
                           color: Colors.white,
-                          fontSize: 24,
+                          fontSize: 20,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
@@ -2910,7 +3016,7 @@ Input: $input''';
                         '$itemsFinished',
                         style: const TextStyle(
                           color: Colors.white,
-                          fontSize: 24,
+                          fontSize: 20,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
@@ -2925,6 +3031,48 @@ Input: $input''';
                   ),
                 ],
               ),
+              // Money saved row (below the main numbers) - show amount on the left, slightly larger
+              const SizedBox(height: 12),
+              if (moneySaved > 0.0) ...[
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    // Left-aligned money saved amount (larger)
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Text(
+                              '💰 ',
+                              style: TextStyle(fontSize: 18),
+                            ),
+                            Text(
+                              '${currencySymbol}${moneySaved.toStringAsFixed(2)}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'money saved',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.9),
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    // Keep the rest of the card content aligned as before
+                    const Spacer(),
+                  ],
+                ),
+              ],
             ],
           ),
         );
@@ -2932,11 +3080,13 @@ Input: $input''';
     );
   }
 
+
+
 }
 
 class _EmptyState extends StatefulWidget {
   const _EmptyState({required this.isDarkMode});
-  
+
   final bool isDarkMode;
 
   @override
@@ -2973,8 +3123,41 @@ class _EmptyStateState extends State<_EmptyState> {
 
       for (var doc in snapshot.docs) {
         final data = doc.data();
-        final carbonSaved = data['carbonSaved'] as double? ?? 0.0;
-        totalCarbon += carbonSaved;
+        final qtyNum = (data['quantity'] is num) ? (data['quantity'] as num).toDouble() : 1.0;
+        final groceryType = (data['groceryType'] ?? 'other').toString();
+
+        double carbonPerKg;
+        switch (groceryType) {
+          case 'meat':
+            carbonPerKg = 27.0;
+            break;
+          case 'poultry':
+            carbonPerKg = 6.9;
+            break;
+          case 'seafood':
+            carbonPerKg = 13.6;
+            break;
+          case 'dairy':
+            carbonPerKg = 3.2;
+            break;
+          case 'vegetable':
+            carbonPerKg = 2.0;
+            break;
+          case 'fruit':
+            carbonPerKg = 1.0;
+            break;
+          case 'grain':
+            carbonPerKg = 1.4;
+            break;
+          case 'frozen':
+            carbonPerKg = 3.0;
+            break;
+          default:
+            carbonPerKg = 2.5;
+        }
+
+        // Compute estimated carbon saved per item (assume avg 0.5kg per item)
+        totalCarbon += qtyNum * carbonPerKg * 0.5;
         itemCount++;
       }
 
@@ -3020,16 +3203,16 @@ class _EmptyStateState extends State<_EmptyState> {
             Container(
               padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
-                color: widget.isDarkMode 
-                    ? Colors.grey[800] 
+                color: widget.isDarkMode
+                    ? Colors.grey[800]
                     : const Color(0xFFF5F5F5),
                 shape: BoxShape.circle,
               ),
               child: Icon(
                 Icons.kitchen,
                 size: 64,
-                color: widget.isDarkMode 
-                    ? ThemeService.darkTextSecondary 
+                color: widget.isDarkMode
+                    ? ThemeService.darkTextSecondary
                     : Colors.grey[400],
               ),
             ),
@@ -3039,8 +3222,8 @@ class _EmptyStateState extends State<_EmptyState> {
               style: TextStyle(
                 fontSize: 24,
                 fontWeight: FontWeight.bold,
-                color: widget.isDarkMode 
-                    ? ThemeService.darkTextPrimary 
+                color: widget.isDarkMode
+                    ? ThemeService.darkTextPrimary
                     : ThemeService.lightTextPrimary,
               ),
             ),
@@ -3050,8 +3233,8 @@ class _EmptyStateState extends State<_EmptyState> {
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 16,
-                color: widget.isDarkMode 
-                    ? ThemeService.darkTextSecondary 
+                color: widget.isDarkMode
+                    ? ThemeService.darkTextSecondary
                     : ThemeService.lightTextSecondary,
               ),
             ),

@@ -519,7 +519,7 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
         final expiry = now.add(Duration(days: days));
         final doc = col.doc();
 
-        batch.set(doc, {
+        final Map<String, dynamic> docData = {
           'name': it.name,
           'quantity': it.quantity,
           'expiryDate': Timestamp.fromDate(expiry),
@@ -527,7 +527,12 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
           'createdAt': FieldValue.serverTimestamp(),
           'updatedAt': FieldValue.serverTimestamp(),
           'source': 'receipt',
-        });
+        };
+        // Attach price/currency when available
+        if (it.price != null) docData['price'] = it.price;
+        if (it.currency != null) docData['currency'] = it.currency;
+
+        batch.set(doc, docData);
 
         // Temporarily disable notifications to prevent crashes
         // Schedule notification (don't await here, collect for later)
