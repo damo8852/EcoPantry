@@ -36,23 +36,8 @@ dependencies:
   cupertino_icons: ^1.0.8
   firebase_core: ^4.1.1
   cloud_firestore: ^6.0.2
-  firebase_auth: ^6.1.0
-  firebase_storage: ^13.0.2
-  firebase_messaging: ^16.0.2
-  cloud_functions: ^6.0.2
-  flutter_local_notifications: ^19.4.2
-  timezone: ^0.10.1
-  google_sign_in: ^6.2.1
-  google_mlkit_text_recognition: ^0.13.0
-  mobile_scanner: ^7.1.2
-  camera: ^0.11.0+2
-  collection: ^1.17.1
-  image_picker: ^1.1.2
   http: ^1.2.0
-  crypto: ^3.0.3
-  shared_preferences: ^2.2.2
   permission_handler: ^11.3.1
-  url_launcher: ^6.2.5
   google_maps_flutter: ^2.5.0
   geolocator: ^12.0.0
   speech_to_text: ^7.0.0
@@ -82,8 +67,6 @@ flutter:
   # the material Icons class.
   uses-material-design: true
   assets:
-    - assets/expiry_rules.json
-    - assets/upc_map.json
     - assets/icon/
 
   # To add assets to your application, add an assets section, like this:
@@ -126,4 +109,4 @@ flutter_launcher_icons:
     generate: true
     image_path: "assets/icon/Inverted_Logo.png"
     background_color: "#FFFFFF"
-    theme_color: "#27AE60"
+    theme_color: "#2196F3"

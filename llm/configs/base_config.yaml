@@ -1,0 +1,38 @@
+# Base configuration for food LLM training
+
+# Model settings
+model:
+  name: "distilgpt2"  # Options: distilgpt2, gpt2, TinyLlama
+  vocab_size: 15000
+  max_seq_len: 512
+  
+# Training settings
+training:
+  num_epochs: 3
+  batch_size: 8
+  learning_rate: 5e-5
+  warmup_steps: 500
+  gradient_accumulation_steps: 2
+  fp16: true  # Use mixed precision training (requires GPU)
+  
+# Data settings
+data:
+  train_file: "../data/train.jsonl"
+  eval_file: "../data/eval.jsonl"
+  max_length: 512
+  
+# Output settings
+output:
+  output_dir: "./food_model"
+  logging_dir: "./output/logs"
+  save_steps: 500
+  eval_steps: 500
+  save_total_limit: 3
+  
+# Optimization
+optimization:
+  use_lora: false  # Use LoRA for efficient fine-tuning
+  lora_r: 8
+  lora_alpha: 16
+  lora_dropout: 0.1
+
