@@ -1,12 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
-import 'package:timezone/data/latest.dart' as tz;
-import 'package:timezone/timezone.dart' as tz;
-import 'screens/auth_gate.dart';
-import 'screens/settings.dart';
-import 'services/notifications.dart';
-import 'services/theme_service.dart';
+import 'screens/maps_screen.dart';
 import 'services/config_service.dart';
 
 Future<void> main() async {
@@ -17,54 +12,34 @@ Future<void> main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
-  // Timezone (for scheduled notifs)
-  tz.initializeTimeZones();
-  // If you want device-detected tz later, use flutter_native_timezone.
-  tz.setLocalLocation(tz.getLocation('America/Denver'));
-
-  // Local notifications
-  await NotificationsService.instance.init(); // creates channel, requests permissions on iOS/Android 13+
-
-  // Initialize theme service
-  await ThemeService().init();
-
-  // Initialize configuration service with default API key
+  // Initialize configuration service
   await ConfigService().initializeWithDefaultKey();
 
-  runApp(const EcoPantryApp());
+  runApp(const AtlasMapsApp());
 }
 
-
-class EcoPantryApp extends StatelessWidget {
-  const EcoPantryApp({super.key});
+class AtlasMapsApp extends StatelessWidget {
+  const AtlasMapsApp({super.key});
+  
   @override
   Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: ThemeService(),
-      builder: (context, child) {
-        final themeService = ThemeService();
-        return MaterialApp(
-          title: 'EcoPantry',
-          theme: ThemeData(
-            colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF27AE60)),
-            useMaterial3: true,
-            brightness: Brightness.light,
-          ),
-          darkTheme: ThemeData(
-            colorScheme: ColorScheme.fromSeed(
-              seedColor: const Color(0xFF27AE60),
-              brightness: Brightness.dark,
-            ),
-            useMaterial3: true,
-            brightness: Brightness.dark,
-          ),
-          themeMode: themeService.isDarkMode ? ThemeMode.dark : ThemeMode.light,
-          home: const AuthGate(), // <-- use the gate
-          routes: {
-            '/settings': (context) => const SettingsPage(),
-          },
-        );
-      },
+    return MaterialApp(
+      title: 'Atlas Maps',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+        useMaterial3: true,
+        brightness: Brightness.light,
+      ),
+      darkTheme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.blue,
+          brightness: Brightness.dark,
+        ),
+        useMaterial3: true,
+        brightness: Brightness.dark,
+      ),
+      home: const MapsScreen(),
     );
   }
 }
