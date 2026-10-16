@@ -5,7 +5,6 @@ import 'config_service.dart';
 class LLMService {
   // OpenAI API configuration
   static const String _baseUrl = 'https://api.openai.com/v1';
-  static const String _model = 'gpt-4o-mini'; // Fast, cost-effective, and accurate model
 
   final ConfigService _configService = ConfigService();
 
@@ -34,15 +33,14 @@ class LLMService {
 
     try {
       final requestBody = {
-        'model': _model,
+        'model': _configService.openAiModel,
         'messages': [
           {
             'role': 'user',
             'content': prompt,
           }
         ],
-        'temperature': temperature,
-        'max_tokens': maxTokens,
+        ...ConfigService().openAiSampling(temperature: temperature, maxTokens: maxTokens),
       };
 
       if (useJsonMode) {
@@ -149,15 +147,14 @@ $itemName$context ->''';
 
     try {
       final requestBody = {
-        'model': _model,
+        'model': _configService.openAiModel,
         'messages': [
           {
             'role': 'user',
             'content': prompt,
           }
         ],
-        'temperature': 0.01, // Low temperature for consistent results
-        'max_tokens': 60, // Limit response length for expiry predictions
+        ...ConfigService().openAiSampling(temperature: 0.01, maxTokens: 60),
       };
 
       // Enable JSON mode if requested (guarantees valid JSON output)
@@ -246,7 +243,7 @@ $itemName$context ->''';
   /// Get list of available OpenAI models
   Future<List<String>> getAvailableModels() async {
     // Return the model we're configured to use
-    return [_model];
+    return [_configService.openAiModel];
   }
 
   /// Generate recipe suggestions based on available ingredients
@@ -524,15 +521,14 @@ Rules:
           'Authorization': 'Bearer $apiKey',
         },
         body: json.encode({
-          'model': _model,
+          'model': _configService.openAiModel,
           'messages': [
             {
               'role': 'user',
               'content': prompt,
             }
           ],
-          'temperature': 0.2, // Lower for more predictable output
-          'max_tokens': 2000, // Increased for complete JSON generation of multiple recipes
+          ...ConfigService().openAiSampling(temperature: 0.2, maxTokens: 2000),
           'response_format': {'type': 'json_object'}, // JSON mode for reliable output
         }),
       ).timeout(const Duration(seconds: 30));

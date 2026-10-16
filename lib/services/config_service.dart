@@ -1,4 +1,8 @@
+import 'dart:convert';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 class ConfigService {
   static final ConfigService _instance = ConfigService._internal();
@@ -162,10 +166,62 @@ class ConfigService {
     _walmartCacheTime = null;
   }
 
-  /// Initialize - no longer needed since we read from Firebase
+  /// Loads on-device settings. The OpenAI key itself lives in Firestore at /config/openai.
   Future<void> initializeWithDefaultKey() async {
-    // This method is kept for compatibility but does nothing
-    // The API key should be set directly in Firebase Console
-    print('ConfigService: API key should be configured in Firebase Console at /config/mistral');
+    final prefs = await SharedPreferences.getInstance();
+    _openAiModel = prefs.getString(_openAiModelKey) ?? defaultOpenAiModel;
+  }
+
+  // ---------------------------------------------------------------------------
+  // OpenAI model (Settings > AI model), used by every AI feature in the app
+  // ---------------------------------------------------------------------------
+
+  static const String defaultOpenAiModel = 'gpt-6-luna';
+  static const String _openAiModelKey = 'openai_model';
+  String _openAiModel = defaultOpenAiModel;
+
+  String get openAiModel => _openAiModel;
+
+  Future<void> setOpenAiModel(String model) async {
+    _openAiModel = model.trim().isEmpty ? defaultOpenAiModel : model.trim();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_openAiModelKey, _openAiModel);
+  }
+
+  /// Only the older GPT-4 / GPT-3.5 chat models accept `temperature`. Newer families (o-series, GPT-5 and later)
+  /// are reasoning models: they reject it and spend part of their token budget thinking.
+  bool get _isReasoningModel => !RegExp(r'^gpt-(4|3\.5)').hasMatch(_openAiModel);
+
+  /// Sampling/length parameters for a chat completion, adjusted for the selected model.
+  Map<String, dynamic> openAiSampling({required double temperature, required int maxTokens}) => _isReasoningModel
+      ? {'max_completion_tokens': maxTokens + 8000}
+      : {'temperature': temperature, 'max_completion_tokens': maxTokens};
+
+  /// Chat models available to this API key: GPT models first, then o-series, newest names first. Throws on network/API errors.
+  Future<List<String>> listOpenAiModels() async {
+    final apiKey = await getOpenAiApiKey();
+    if (apiKey == null) throw Exception('OpenAI API key is not configured.');
+    final response = await http.get(
+      Uri.parse('https://api.openai.com/v1/models'),
+      headers: {'Authorization': 'Bearer $apiKey'},
+    ).timeout(const Duration(seconds: 20));
+    if (response.statusCode != 200) {
+      throw Exception('OpenAI returned ${response.statusCode}');
+    }
+    // Keep general chat models; drop audio, image, embedding, moderation and other special-purpose ones.
+    const exclude = ['audio', 'realtime', 'tts', 'transcribe', 'image', 'search', 'embedding', 'moderation',
+        'dall-e', 'whisper', 'davinci', 'babbage', 'instruct', 'codex', 'computer-use', 'live'];
+    final ids = (jsonDecode(response.body)['data'] as List)
+        .map((m) => m['id'].toString())
+        .where((id) => RegExp(r'^(gpt-|o\d)').hasMatch(id))
+        .where((id) => !exclude.any(id.contains))
+        // Hide dated snapshots like "o4-mini-2025-04-16"; the undated name points at the latest one.
+        .where((id) => !RegExp(r'-\d{4}-\d{2}-\d{2}$').hasMatch(id))
+        .toList()
+      ..sort((a, b) {
+        final ga = a.startsWith('gpt-') ? 0 : 1, gb = b.startsWith('gpt-') ? 0 : 1;
+        return ga != gb ? ga - gb : b.compareTo(a);
+      });
+    return ids;
   }
 }

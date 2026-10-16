@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import 'animations.dart';
 import '../models/grocery_type.dart';
 
 class ItemTile extends StatelessWidget {
@@ -128,697 +130,254 @@ class ItemTile extends StatelessWidget {
     }
   }
 
+  /// Days until expiry (negative once expired), or null when there's no date.
+  int? get _daysLeft {
+    if (expiry == null) return null;
+    final now = DateTime.now();
+    return DateTime(expiry!.year, expiry!.month, expiry!.day).difference(DateTime(now.year, now.month, now.day)).inDays;
+  }
+
+  static String expiryLabel(int? daysLeft) => daysLeft == null
+      ? 'no date'
+      : daysLeft < -1
+          ? 'expired ${-daysLeft}d ago'
+          : daysLeft == -1
+              ? 'expired yesterday'
+              : daysLeft == 0
+                  ? 'today'
+                  : daysLeft == 1
+                      ? 'tomorrow'
+                      : daysLeft <= 13
+                          ? 'in $daysLeft days'
+                          : 'in ${(daysLeft / 7).round()} wks';
+
+  static Color expiryColor(int? daysLeft) => daysLeft == null
+      ? const Color(0xFF95A5A6)
+      : daysLeft <= 1
+          ? const Color(0xFFE74C3C)
+          : daysLeft <= 3
+              ? const Color(0xFFF39C12)
+              : const Color(0xFF27AE60);
+
   @override
   Widget build(BuildContext context) {
-    final dateStr = expiry != null ? expiry!.toLocal().toString().split(' ').first : '—';
-    int? daysLeft;
-    if (expiry != null) {
-      final today = DateTime.now();
-      daysLeft = DateTime(expiry!.year, expiry!.month, expiry!.day)
-          .difference(DateTime(today.year, today.month, today.day)).inDays;
-    }
-    
-    final chip = daysLeft == null
-        ? 'no date'
-        : (daysLeft <= 0 ? 'today' : daysLeft == 1 ? 'in 1 day' : 'in $daysLeft days');
-    
-    final chipColor = daysLeft == null
-        ? const Color(0xFF95A5A6)
-        : (daysLeft <= 1 ? const Color(0xFFE74C3C) : daysLeft <= 3 ? const Color(0xFFF39C12) : const Color(0xFF27AE60));
-
+    final days = _daysLeft;
+    final chipColor = expiryColor(days);
     final groceryColor = _getGroceryColor(groceryType);
-    final groceryIcon = _getGroceryIcon(groceryType);
+    final usageColor = _getUsageColor(usagePercentage);
+    final text = isDarkMode ? const Color(0xFFE8E8E8) : const Color(0xFF2C3E50);
+    final subtext = isDarkMode ? const Color(0xFF9E9E9E) : const Color(0xFF7F8C8D);
+    final compact = isCompactView;
+    final iconSize = compact ? 34.0 : 42.0;
 
-    if (isCompactView) {
-      return GestureDetector(
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: isSelectionMode ? () => onSelectionChanged?.call(!isSelected) : () => _showActions(context),
         onLongPress: onSelectMultiple,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Stack(
+        child: Padding(
+          padding: EdgeInsets.symmetric(horizontal: 14, vertical: compact ? 8 : 12),
+          child: Row(
             children: [
-              Row(
-                children: [
-                  // Smaller grocery type icon
-                  Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      color: groceryColor.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Icon(
-                      groceryIcon,
-                      color: groceryColor,
-                      size: 16,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  // Compact item details
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                name,
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                  color: isDarkMode ? const Color(0xFFE8E8E8) : const Color(0xFF2C3E50),
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            if (isPrioritized)
-                              Container(
-                                margin: const EdgeInsets.only(left: 6),
-                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFE74C3C),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: const Text(
-                                  '!',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 10,
-                                  ),
-                                ),
-                              ),
-                            if (isFrozen)
-                              Container(
-                                margin: const EdgeInsets.only(left: 6),
-                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF00BCD4),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: const Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      Icons.ac_unit_rounded,
-                                      color: Colors.white,
-                                      size: 8,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                          ],
+              // Type icon inside a ring showing how much is left
+              SizedBox(
+                width: iconSize + 8,
+                height: iconSize + 8,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    if (usagePercentage < 100)
+                      TweenAnimationBuilder<double>(
+                        tween: Tween(begin: 0, end: (usagePercentage / 100).clamp(0.0, 1.0)),
+                        duration: const Duration(milliseconds: 700),
+                        curve: Curves.easeOutCubic,
+                        builder: (_, v, __) => SizedBox.expand(
+                          child: CircularProgressIndicator(
+                            value: v,
+                            strokeWidth: 2.5,
+                            strokeCap: StrokeCap.round,
+                            backgroundColor: usageColor.withValues(alpha: 0.15),
+                            valueColor: AlwaysStoppedAnimation(usageColor),
+                          ),
                         ),
-                        const SizedBox(height: 2),
-                        Row(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                              decoration: BoxDecoration(
-                                color: groceryColor.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Text(
-                                groceryType.displayName,
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w500,
-                                  color: groceryColor,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            SizedBox(
-                              width: 50,
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'Qty',
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      color: _getUsageColor(usagePercentage),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  ClipRRect(
-                                    borderRadius: BorderRadius.circular(2),
-                                    child: LinearProgressIndicator(
-                                      value: (usagePercentage / 100).clamp(0.0, 1.0),
-                                      backgroundColor: _getUsageColor(usagePercentage).withOpacity(0.2),
-                                      valueColor: AlwaysStoppedAnimation<Color>(
-                                        _getUsageColor(usagePercentage),
-                                      ),
-                                      minHeight: 3,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                              decoration: BoxDecoration(
-                                color: chipColor.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Text(
-                                chip,
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w600,
-                                  color: chipColor,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  // Smaller action menu
-                  SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: PopupMenuButton<String>(
-                      padding: EdgeInsets.zero,
-                      iconSize: 14,
-                      icon: Icon(
-                        Icons.more_vert_rounded,
-                        color: const Color(0xFF7F8C8D),
-                        size: 14,
                       ),
-                      onSelected: (v) {
-                        if (v == 'edit') onEdit();
-                        if (v == 'half') onUsedHalf();
-                        if (v == 'finish') onFinish();
-                        if (v == 'remove') onRemove();
-                        if (v == 'select_multiple' && onSelectMultiple != null) onSelectMultiple!();
-                        if (v == 'prioritize' && onPrioritize != null) onPrioritize!();
-                        if (v == 'unprioritize' && onUnprioritize != null) onUnprioritize!();
-                        if (v == 'freeze' && onFreeze != null) onFreeze!();
-                        if (v == 'unfreeze' && onUnfreeze != null) onUnfreeze!();
-                      },
-                      itemBuilder: (_) => [
-                        if (onSelectMultiple != null)
-                          PopupMenuItem(
-                            value: 'select_multiple',
-                            child: Row(
-                              children: [
-                                const Icon(
-                                  Icons.checklist_rounded,
-                                  size: 18,
-                                  color: Color(0xFF27AE60),
-                                ),
-                                const SizedBox(width: 8),
-                                const Text('Select Multiple'),
-                              ],
-                            ),
-                          ),
-                        PopupMenuItem(
-                          value: 'edit',
-                          child: Row(
-                            children: [
-                              const Icon(
-                                Icons.edit_rounded,
-                                size: 18,
-                                color: Color(0xFF4A90E2),
-                              ),
-                              const SizedBox(width: 8),
-                              const Text('Edit'),
-                            ],
-                          ),
-                        ),
-                        PopupMenuItem(
-                          value: 'half',
-                          child: Row(
-                            children: [
-                              const Icon(
-                                Icons.remove_circle_outline,
-                                size: 18,
-                                color: Color(0xFFF39C12),
-                              ),
-                              const SizedBox(width: 8),
-                              const Text('Used ½'),
-                            ],
-                          ),
-                        ),
-                        if (onPrioritize != null && !isPrioritized)
-                          PopupMenuItem(
-                            value: 'prioritize',
-                            child: Row(
-                              children: [
-                                const Icon(
-                                  Icons.priority_high_rounded,
-                                  size: 18,
-                                  color: Color(0xFFE74C3C),
-                                ),
-                                const SizedBox(width: 8),
-                                const Text('Prioritize Item'),
-                              ],
-                            ),
-                          ),
-                        if (onUnprioritize != null && isPrioritized)
-                          PopupMenuItem(
-                            value: 'unprioritize',
-                            child: Row(
-                              children: [
-                                const Icon(
-                                  Icons.priority_high_outlined,
-                                  size: 18,
-                                  color: Colors.orange,
-                                ),
-                                const SizedBox(width: 8),
-                                const Text('Remove Priority'),
-                              ],
-                            ),
-                          ),
-                        if (onFreeze != null && !isFrozen)
-                          PopupMenuItem(
-                            value: 'freeze',
-                            child: Row(
-                              children: [
-                                const Icon(
-                                  Icons.ac_unit_rounded,
-                                  size: 18,
-                                  color: Color(0xFF00BCD4),
-                                ),
-                                const SizedBox(width: 8),
-                                const Text('Freeze Item'),
-                              ],
-                            ),
-                          ),
-                        if (onUnfreeze != null && isFrozen)
-                          PopupMenuItem(
-                            value: 'unfreeze',
-                            child: Row(
-                              children: [
-                                const Icon(
-                                  Icons.whatshot_rounded,
-                                  size: 18,
-                                  color: Color(0xFF00BCD4),
-                                ),
-                                const SizedBox(width: 8),
-                                const Text('Unfreeze Item'),
-                              ],
-                            ),
-                          ),
-                        PopupMenuItem(
-                          value: 'finish',
-                          child: Row(
-                            children: [
-                              const Icon(
-                                Icons.check_circle_rounded,
-                                size: 18,
-                                color: Color(0xFF27AE60),
-                              ),
-                              const SizedBox(width: 8),
-                              const Text('Finished'),
-                            ],
-                          ),
-                        ),
-                        PopupMenuItem(
-                          value: 'remove',
-                          child: Row(
-                            children: [
-                              const Icon(
-                                Icons.delete_rounded,
-                                size: 18,
-                                color: Color(0xFFE74C3C),
-                              ),
-                              const SizedBox(width: 8),
-                              const Text('Remove'),
-                            ],
-                          ),
-                        ),
-                      ],
+                    Container(
+                      width: iconSize,
+                      height: iconSize,
+                      decoration: BoxDecoration(color: groceryColor.withValues(alpha: 0.14), shape: BoxShape.circle),
+                      child: Icon(_getGroceryIcon(groceryType), color: groceryColor, size: compact ? 16 : 20),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-              // Checkbox in top-right corner
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      maxLines: compact ? 1 : 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: compact ? 14 : 15, fontWeight: FontWeight.w600, color: text, height: 1.25),
+                    ),
+                    if (!compact) ...[
+                      const SizedBox(height: 3),
+                      Row(
+                        children: [
+                          if (isPrioritized) ...[
+                            const Icon(Icons.flag_rounded, size: 13, color: Color(0xFFE74C3C)),
+                            const SizedBox(width: 3),
+                          ],
+                          if (isFrozen) ...[
+                            const Icon(Icons.ac_unit_rounded, size: 13, color: Color(0xFF00BCD4)),
+                            const SizedBox(width: 3),
+                          ],
+                          Flexible(
+                            child: Text(
+                              [
+                                groceryType.displayName,
+                                if (quantity > 1) '×$quantity',
+                                if (usagePercentage < 100) '${usagePercentage.round()}% left',
+                              ].join(' · '),
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(fontSize: 12, color: subtext),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
               if (isSelectionMode)
-                Positioned(
-                  top: 0,
-                  right: 0,
-                  child: Checkbox(
-                    value: isSelected,
-                    onChanged: (value) => onSelectionChanged?.call(value ?? false),
-                    activeColor: const Color(0xFF27AE60),
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    visualDensity: VisualDensity.compact,
+                Checkbox(
+                  value: isSelected,
+                  onChanged: (value) => onSelectionChanged?.call(value ?? false),
+                  activeColor: const Color(0xFF27AE60),
+                  visualDensity: VisualDensity.compact,
+                )
+              else
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: chipColor.withValues(alpha: 0.13),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    expiryLabel(days),
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: chipColor),
                   ),
                 ),
             ],
           ),
         ),
-      );
-    }
+      ),
+    );
+  }
 
-    // Regular view (existing code)
-    return GestureDetector(
-      onLongPress: onSelectMultiple,
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        child: Stack(
-          children: [
-            Row(
-        children: [
-          // Grocery type icon
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: groceryColor.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(
-              groceryIcon,
-              color: groceryColor,
-              size: 24,
-            ),
-          ),
-          const SizedBox(width: 16),
-          // Item details
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+  /// Everything you can do with an item, in one sheet instead of a crowded popup.
+  Future<void> _showActions(BuildContext context) async {
+    final days = _daysLeft;
+    final groceryColor = _getGroceryColor(groceryType);
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+    Widget action(IconData icon, Color color, String label, VoidCallback? run) => ListTile(
+          leading: iconChip(icon, color, size: 18, pad: 7),
+          title: Text(label),
+          onTap: run == null
+              ? null
+              : () {
+                  Navigator.pop(context);
+                  run();
+                },
+        );
+
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (ctx) => SafeArea(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                child: Row(
                   children: [
-                    Flexible(
-                      child: Text(
-                        name,
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: isDarkMode ? const Color(0xFFE8E8E8) : const Color(0xFF2C3E50),
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: groceryColor.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        groceryType.displayName,
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w500,
-                          color: groceryColor,
-                        ),
-                      ),
-                    ),
-                    if (isPrioritized)
-                      Container(
-                        margin: const EdgeInsets.only(left: 8),
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFE74C3C),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Text(
-                          '!',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12,
+                    iconChip(_getGroceryIcon(groceryType), groceryColor, size: 22, pad: 10),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(name, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 2),
+                          Text(
+                            [
+                              groceryType.displayName,
+                              if (expiry != null) 'expires ${months[expiry!.month - 1]} ${expiry!.day} (${expiryLabel(days)})',
+                              '${usagePercentage.round()}% left',
+                            ].join(' · '),
+                            style: TextStyle(fontSize: 12, color: Theme.of(ctx).hintColor),
                           ),
-                        ),
-                      ),
-                    if (isFrozen)
-                      Container(
-                        margin: const EdgeInsets.only(left: 8),
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF00BCD4),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.ac_unit_rounded,
-                              color: Colors.white,
-                              size: 12,
-                            ),
-                          ],
-                        ),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Icon(
-                      Icons.inventory_2_rounded,
-                      size: 12,
-                      color: _getUsageColor(usagePercentage),
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      'Qty',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
-                        color: _getUsageColor(usagePercentage),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    SizedBox(
-                      width: 100,
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(4),
-                        child: LinearProgressIndicator(
-                          value: (usagePercentage / 100).clamp(0.0, 1.0),
-                          backgroundColor: _getUsageColor(usagePercentage).withOpacity(0.2),
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            _getUsageColor(usagePercentage),
-                          ),
-                          minHeight: 4,
-                        ),
+                        ],
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    Icon(
-                      Icons.calendar_today_rounded,
-                      size: 14,
-                      color: chipColor,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      'Expires: $dateStr',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: isDarkMode ? const Color(0xFF9E9E9E) : const Color(0xFF7F8C8D),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: chipColor.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        chip,
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: chipColor,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          // Action menu
-          Container(
-            decoration: BoxDecoration(
-              color: isDarkMode ? const Color(0xFF3C3C3C) : const Color(0xFFF8F9FA),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: PopupMenuButton<String>(
-              icon: const Icon(
-                Icons.more_vert_rounded,
-                color: Color(0xFF7F8C8D),
               ),
-              onSelected: (v) {
-                if (v == 'edit') onEdit();
-                if (v == 'half') onUsedHalf();
-                if (v == 'finish') onFinish();
-                if (v == 'remove') onRemove();
-                if (v == 'select_multiple' && onSelectMultiple != null) onSelectMultiple!();
-                if (v == 'prioritize' && onPrioritize != null) onPrioritize!();
-                if (v == 'unprioritize' && onUnprioritize != null) onUnprioritize!();
-                if (v == 'freeze' && onFreeze != null) onFreeze!();
-                if (v == 'unfreeze' && onUnfreeze != null) onUnfreeze!();
-              },
-              itemBuilder: (_) => [
-                if (onSelectMultiple != null)
-                  PopupMenuItem(
-                    value: 'select_multiple',
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.checklist_rounded,
-                          size: 18,
-                          color: Color(0xFF27AE60),
-                        ),
-                        const SizedBox(width: 8),
-                        const Text('Select Multiple'),
-                      ],
-                    ),
-                  ),
-                PopupMenuItem(
-                  value: 'edit',
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.edit_rounded,
-                        size: 18,
-                        color: Color(0xFF4A90E2),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton.tonalIcon(
+                        onPressed: () {
+                          Navigator.pop(ctx);
+                          onUsedHalf();
+                        },
+                        icon: const Icon(Icons.contrast_rounded),
+                        label: const Text('Used ½'),
                       ),
-                      const SizedBox(width: 8),
-                      const Text('Edit'),
-                    ],
-                  ),
-                ),
-                PopupMenuItem(
-                  value: 'half',
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.remove_circle_outline,
-                        size: 18,
-                        color: Color(0xFFF39C12),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: FilledButton.icon(
+                        style: FilledButton.styleFrom(backgroundColor: const Color(0xFF27AE60)),
+                        onPressed: () {
+                          Navigator.pop(ctx);
+                          onFinish();
+                        },
+                        icon: const Icon(Icons.check_circle_rounded),
+                        label: const Text('Finished'),
                       ),
-                      const SizedBox(width: 8),
-                      const Text('Used ½'),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-                if (onPrioritize != null && !isPrioritized)
-                  PopupMenuItem(
-                    value: 'prioritize',
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.priority_high_rounded,
-                          size: 18,
-                          color: Color(0xFFE74C3C),
-                        ),
-                        const SizedBox(width: 8),
-                        const Text('Prioritize Item'),
-                      ],
-                    ),
-                  ),
-                if (onUnprioritize != null && isPrioritized)
-                  PopupMenuItem(
-                    value: 'unprioritize',
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.priority_high_outlined,
-                          size: 18,
-                          color: Colors.orange,
-                        ),
-                        const SizedBox(width: 8),
-                        const Text('Remove Priority'),
-                      ],
-                    ),
-                  ),
-                if (onFreeze != null && !isFrozen)
-                  PopupMenuItem(
-                    value: 'freeze',
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.ac_unit_rounded,
-                          size: 18,
-                          color: Color(0xFF00BCD4),
-                        ),
-                        const SizedBox(width: 8),
-                        const Text('Freeze Item'),
-                      ],
-                    ),
-                  ),
-                if (onUnfreeze != null && isFrozen)
-                  PopupMenuItem(
-                    value: 'unfreeze',
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.whatshot_rounded,
-                          size: 18,
-                          color: Color(0xFF00BCD4),
-                        ),
-                        const SizedBox(width: 8),
-                        const Text('Unfreeze Item'),
-                      ],
-                    ),
-                  ),
-                PopupMenuItem(
-                  value: 'finish',
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.check_circle_rounded,
-                        size: 18,
-                        color: Color(0xFF27AE60),
-                      ),
-                      const SizedBox(width: 8),
-                      const Text('Finished'),
-                    ],
-                  ),
-                ),
-                PopupMenuItem(
-                  value: 'remove',
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.delete_rounded,
-                        size: 18,
-                        color: Color(0xFFE74C3C),
-                      ),
-                      const SizedBox(width: 8),
-                      const Text('Remove'),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
+              ),
+              const SizedBox(height: 8),
+              action(Icons.edit_rounded, const Color(0xFF4A90E2), 'Edit', onEdit),
+              if (onPrioritize != null && !isPrioritized)
+                action(Icons.flag_rounded, const Color(0xFFE74C3C), 'Prioritize', onPrioritize),
+              if (onUnprioritize != null && isPrioritized)
+                action(Icons.outlined_flag_rounded, const Color(0xFF95A5A6), 'Remove priority', onUnprioritize),
+              if (onFreeze != null && !isFrozen)
+                action(Icons.ac_unit_rounded, const Color(0xFF00BCD4), 'Freeze', onFreeze),
+              if (onUnfreeze != null && isFrozen)
+                action(Icons.whatshot_rounded, const Color(0xFFF39C12), 'Unfreeze', onUnfreeze),
+              if (onSelectMultiple != null)
+                action(Icons.checklist_rounded, const Color(0xFF27AE60), 'Select multiple', onSelectMultiple),
+              action(Icons.delete_rounded, const Color(0xFFE74C3C), 'Remove', onRemove),
+              const SizedBox(height: 8),
             ],
-            ),
-            // Checkbox in top-right corner
-            if (isSelectionMode)
-              Positioned(
-                top: 0,
-                right: 0,
-                child: Checkbox(
-                  value: isSelected,
-                  onChanged: (value) => onSelectionChanged?.call(value ?? false),
-                  activeColor: const Color(0xFF27AE60),
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  visualDensity: VisualDensity.compact,
-                ),
-              ),
-          ],
+          ),
         ),
       ),
     );
   }
 }
-

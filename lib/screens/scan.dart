@@ -15,9 +15,7 @@ import '../services/parser.dart';
 import '../services/llm_service.dart';
 import '../services/theme_service.dart';
 import '../services/config_service.dart';
-import '../services/subscription_service.dart';
 import '../models/grocery_type.dart';
-import '../widgets/upgrade_dialog.dart';
 
 class ScanPage extends StatefulWidget {
   const ScanPage({super.key});
@@ -301,12 +299,11 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
       if (apiKey == null) return null;
 
       final requestBody = {
-        'model': 'gpt-4o-mini',
+        'model': configService.openAiModel,
         'messages': [
           {'role': 'user', 'content': prompt}
         ],
-        'temperature': 0.1,
-        'max_tokens': 50, // Very small for efficiency
+        ...ConfigService().openAiSampling(temperature: 0.1, maxTokens: 50),
       };
 
       final response = await http.post(
@@ -412,16 +409,6 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
 
 
   Future<void> _pickAndProcess(ImageSource source) async {
-    // Check receipt scanning limit
-    final canScan = await SubscriptionService.instance.canScanReceipt();
-    if (!canScan) {
-      final remaining = await SubscriptionService.instance.getRemainingReceiptScansToday();
-      if (mounted) {
-        await showReceiptScanLimitUpgradeDialog(context, remaining);
-      }
-      return;
-    }
-
     setState(() {
       _busy = true;
       _err = null;
@@ -562,9 +549,6 @@ Return: {"name": "...", "quantity": 1, "type": "..."} or null''';
       // if (notificationTasks.isNotEmpty) {
       //   unawaited(_handleNotificationsSafely(notificationTasks));
       // }
-
-      // Increment receipt scan counter for subscription tracking
-      await SubscriptionService.instance.incrementReceiptScanCount();
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

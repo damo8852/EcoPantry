@@ -1,5 +1,6 @@
 ﻿import 'dart:io';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -17,6 +18,8 @@ import 'collections_screen.dart';
 import 'auth_gate.dart';
 import 'grocery_stores_screen.dart';
 import 'shopping_list_hub_screen.dart';
+import 'spending_screen.dart';
+import '../widgets/animations.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -44,6 +47,9 @@ class _HomePageState extends State<HomePage> {
 
   // Search filter
   String _searchText = '';
+
+  // Quick filter from the header pills: 'soon' (≤3 days) or 'expired'
+  String? _quickFilter;
   bool _showFrozenItems = false;
   bool _hideFrozenItems = true; // Default: hide frozen items
 
@@ -1609,6 +1615,78 @@ class _HomePageState extends State<HomePage> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
+            // Import King Soopers PDF button
+            AnimatedScale(
+              scale: _isFabMenuOpen ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+              child: AnimatedOpacity(
+                opacity: _isFabMenuOpen ? 1.0 : 0.0,
+                duration: const Duration(milliseconds: 200),
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 12.0),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFFE67E22), Color(0xFFD35400)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(8),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFFE67E22).withOpacity(0.3),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: const Text(
+                          'Import King Soopers PDF',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Container(
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFFE67E22), Color(0xFFD35400)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(30),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFFE67E22).withOpacity(0.4),
+                              blurRadius: 12,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: FloatingActionButton(
+                          onPressed: () {
+                            setState(() => _isFabMenuOpen = false);
+                            importKingSoopersPdf(context);
+                          },
+                          backgroundColor: Colors.transparent,
+                          elevation: 0,
+                          heroTag: "kingsoopers_pdf_fab",
+                          child: const Icon(Icons.picture_as_pdf_rounded, color: Colors.white),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
             // Scan Receipt button
             AnimatedScale(
               scale: _isFabMenuOpen ? 1.0 : 0.0,
@@ -1916,6 +1994,14 @@ class _HomePageState extends State<HomePage> {
                     }
                   }
 
+                  // Quick filter from the header pills
+                  if (_quickFilter != null) {
+                    final d = _daysUntil(data);
+                    if (d == null) return false;
+                    if (_quickFilter == 'expired' && d >= 0) return false;
+                    if (_quickFilter == 'soon' && (d < 0 || d > 3)) return false;
+                  }
+
                   // Check search text (prioritize over mustContainText)
                   final searchQuery = _searchText.isNotEmpty ? _searchText : _mustContainText;
                   if (searchQuery.isNotEmpty) {
@@ -1934,164 +2020,15 @@ class _HomePageState extends State<HomePage> {
                 // Store current sorted docs for select all functionality
                 _currentSortedDocs = sortedDocs;
 
+                final entries = _groupEntries(sortedDocs);
+
                 return CustomScrollView(
                   slivers: [
-                    // Welcome section
-                    SliverToBoxAdapter(
-                      child: Container(
-                        margin: const EdgeInsets.fromLTRB(16, 24, 16, 16),
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(
-                          gradient: _themeService.isDarkMode
-                            ? const LinearGradient(
-                                colors: [Color(0xFF2C3E50), Color(0xFF34495E)],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              )
-                            : const LinearGradient(
-                                colors: [Color(0xFF667eea), Color(0xFF764ba2)],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              ),
-                          borderRadius: BorderRadius.circular(20),
-                          boxShadow: [
-                            BoxShadow(
-                              color: (_themeService.isDarkMode ? const Color(0xFF2C3E50) : const Color(0xFF667eea)).withOpacity(0.3),
-                              blurRadius: 15,
-                              offset: const Offset(0, 5),
-                            ),
-                          ],
-                        ),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'Hi, ${user.isAnonymous ? 'Guest' : (user.displayName ?? 'you')}! 👋',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    'Manage your fridge items',
-                                    style: TextStyle(
-                                      color: Colors.white.withOpacity(0.8),
-                                      fontSize: 14,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+                    // Greeting + glance pills
+                    SliverToBoxAdapter(child: Entrance(index: 0, child: _buildHeader(docs))),
 
-                    // Search Bar
-                    SliverToBoxAdapter(
-                      child: Container(
-                        margin: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                        decoration: BoxDecoration(
-                          color: _themeService.isDarkMode ? ThemeService.darkCardBackground : ThemeService.lightCardBackground,
-                          borderRadius: BorderRadius.circular(16),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(_themeService.isDarkMode ? 0.2 : 0.08),
-                              blurRadius: 10,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
-                        ),
-                        child: TextField(
-                          onChanged: (value) => setState(() => _searchText = value),
-                          style: TextStyle(
-                            color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : ThemeService.lightTextPrimary,
-                          ),
-                          decoration: InputDecoration(
-                            hintText: 'Search items...',
-                            hintStyle: TextStyle(
-                              color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary,
-                            ),
-                            prefixIcon: Icon(
-                              Icons.search_rounded,
-                              color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary,
-                            ),
-                            suffixIcon: _searchText.isNotEmpty
-                              ? IconButton(
-                                  icon: Icon(
-                                    Icons.clear_rounded,
-                                    color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary,
-                                  ),
-                                  onPressed: () => setState(() => _searchText = ''),
-                                )
-                              : null,
-                            border: InputBorder.none,
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                          ),
-                        ),
-                      ),
-                    ),
-
-                    // Filter Button
-                    SliverToBoxAdapter(
-                      child: Container(
-                        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: _themeService.isDarkMode ? ThemeService.darkCardBackground : ThemeService.lightCardBackground,
-                            borderRadius: BorderRadius.circular(16),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(_themeService.isDarkMode ? 0.2 : 0.08),
-                                blurRadius: 10,
-                                offset: const Offset(0, 2),
-                              ),
-                            ],
-                          ),
-                          child: Material(
-                            color: Colors.transparent,
-                            child: InkWell(
-                              borderRadius: BorderRadius.circular(16),
-                              onTap: () => _showCompactFilters(),
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                                child: Row(
-                                  children: [
-                                    const Icon(
-                                      Icons.tune_rounded,
-                                      color: Color(0xFF4A90E2),
-                                      size: 20,
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Text(
-                                        _getFilterDisplayText(),
-                                        style: TextStyle(
-                                          color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : ThemeService.lightTextPrimary,
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-                                    Icon(
-                                      Icons.arrow_forward_ios_rounded,
-                                      color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary,
-                                      size: 16,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
+                    // Search with the filter button beside it
+                    SliverToBoxAdapter(child: Entrance(index: 1, child: _buildSearchRow())),
 
                     // Items list or empty state
                     if (docs.isEmpty)
@@ -2100,44 +2037,81 @@ class _HomePageState extends State<HomePage> {
                       )
                     else if (filteredDocs.isEmpty)
                       SliverFillRemaining(
-                        child: Center(
-                          child: Text(
-                            'No items found for this filter',
-                            style: TextStyle(
-                              color: _themeService.isDarkMode ? const Color(0xFF9E9E9E) : const Color(0xFF7F8C8D),
-                              fontSize: 16,
+                        hasScrollBody: false,
+                        child: Entrance(
+                          index: 4,
+                          child: Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Breathing(
+                                  pulse: false,
+                                  period: const Duration(milliseconds: 1600),
+                                  child: iconChip(Icons.search_off_rounded, const Color(0xFF4A90E2), size: 36, pad: 16),
+                                ),
+                                const SizedBox(height: 16),
+                                Text(
+                                  'No items match',
+                                  style: TextStyle(
+                                    color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : ThemeService.lightTextPrimary,
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Try a different search or filter',
+                                  style: TextStyle(
+                                    color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ),
                       )
                     else
                       SliverPadding(
-                        padding: const EdgeInsets.only(top: 1),
-                        sliver: SliverList.separated(
-                        itemCount: sortedDocs.length,
-                        separatorBuilder: (_, __) => const SizedBox(height: 12),
-                        itemBuilder: (context, i) {
+                        padding: const EdgeInsets.only(top: 4),
+                        sliver: SliverList.builder(
+                        itemCount: entries.length,
+                        itemBuilder: (context, e) {
+                          final entry = entries[e];
+                          if (entry.header != null) {
+                            return Entrance(
+                              key: ValueKey('h-${entry.header}'),
+                              index: (e + 2).clamp(0, 14),
+                              child: _sectionHeader(entry.header!, entry.count, entry.color!),
+                            );
+                          }
+                          final i = entry.index;
                           final ref = sortedDocs[i].reference;
                           final data = sortedDocs[i].data();
                           final groceryType = GroceryType.fromString(data['groceryType'] ?? 'other');
                           final itemId = sortedDocs[i].id;
                           final isSelected = _selectedItems.contains(itemId);
 
-                          return Container(
-                            margin: const EdgeInsets.symmetric(horizontal: 16),
+                          // Items in a group share one rounded card, separated by hairlines.
+                          const r = Radius.circular(18);
+                          final tile = AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            margin: EdgeInsets.fromLTRB(16, 0, 16, entry.last ? 6 : 0),
+                            clipBehavior: Clip.antiAlias,
                             decoration: BoxDecoration(
-                              color: _themeService.isDarkMode ? ThemeService.darkCardBackground : ThemeService.lightCardBackground,
-                              borderRadius: BorderRadius.circular(16),
-                              border: _isSelectionMode && isSelected
-                                ? Border.all(color: const Color(0xFF27AE60), width: 2)
-                                : null,
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(_themeService.isDarkMode ? 0.2 : 0.06),
-                                  blurRadius: 10,
-                                  offset: const Offset(0, 2),
-                                ),
-                              ],
+                              color: _isSelectionMode && isSelected
+                                ? const Color(0xFF27AE60).withValues(alpha: 0.12)
+                                : (_themeService.isDarkMode ? ThemeService.darkCardBackground : ThemeService.lightCardBackground),
+                              borderRadius: BorderRadius.vertical(
+                                top: entry.first ? r : Radius.zero,
+                                bottom: entry.last ? r : Radius.zero,
+                              ),
+                              border: entry.last
+                                ? null
+                                : Border(
+                                    bottom: BorderSide(
+                                      color: (_themeService.isDarkMode ? Colors.white : Colors.black).withValues(alpha: 0.06),
+                                    ),
+                                  ),
                             ),
                             child: _isSelectionMode
                               ? ListTile(
@@ -2319,6 +2293,7 @@ class _HomePageState extends State<HomePage> {
                                   },
                                 ),
                           );
+                          return e < 14 ? Entrance(key: ValueKey(itemId), index: e + 2, child: tile) : tile;
                         },
                       ),
                       ),
@@ -2372,10 +2347,9 @@ Input: $input''';
             'Authorization': 'Bearer $apiKey',
           },
           body: json.encode({
-            'model': 'gpt-4o-mini',
+            'model': configService.openAiModel,
             'messages': [{'role': 'user', 'content': prompt}],
-            'temperature': 0.1,
-            'max_tokens': 1000,
+            ...ConfigService().openAiSampling(temperature: 0.1, maxTokens: 1000),
             'response_format': {'type': 'json_object'},
           }),
         ).timeout(const Duration(seconds: 15));
@@ -2895,6 +2869,310 @@ Input: $input''';
     }
   }
 
+  /// Days until an item expires (negative once expired), or null with no date.
+  int? _daysUntil(Map<String, dynamic> data) {
+    final expiry = (data['expiryDate'] as Timestamp?)?.toDate();
+    if (expiry == null) return null;
+    final now = DateTime.now();
+    return DateTime(expiry.year, expiry.month, expiry.day).difference(DateTime(now.year, now.month, now.day)).inDays;
+  }
+
+  /// Splits the list into Expired / Use soon / This week / Later when sorted by expiry; otherwise one group.
+  List<({String? header, int count, Color? color, int index, bool first, bool last})> _groupEntries(
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> sorted) {
+    final out = <({String? header, int count, Color? color, int index, bool first, bool last})>[];
+    void addGroup(String? header, Color? color, List<int> indexes) {
+      if (indexes.isEmpty) return;
+      if (header != null) out.add((header: header, count: indexes.length, color: color, index: -1, first: false, last: false));
+      for (var k = 0; k < indexes.length; k++) {
+        out.add((header: null, count: 0, color: null, index: indexes[k], first: k == 0, last: k == indexes.length - 1));
+      }
+    }
+
+    final grouped = _sortOption == 'expiry_asc' && _searchText.isEmpty;
+    if (!grouped) {
+      addGroup(null, null, [for (var i = 0; i < sorted.length; i++) i]);
+      return out;
+    }
+    final expired = <int>[], soon = <int>[], week = <int>[], later = <int>[];
+    for (var i = 0; i < sorted.length; i++) {
+      final d = _daysUntil(sorted[i].data());
+      if (d == null || d > 7) {
+        later.add(i);
+      } else if (d < 0) {
+        expired.add(i);
+      } else if (d <= 3) {
+        soon.add(i);
+      } else {
+        week.add(i);
+      }
+    }
+    addGroup('Expired', const Color(0xFFE74C3C), expired);
+    addGroup('Use soon', const Color(0xFFF39C12), soon);
+    addGroup('This week', const Color(0xFF27AE60), week);
+    addGroup('Later', const Color(0xFF95A5A6), later);
+    return out;
+  }
+
+  Widget _sectionHeader(String title, int count, Color color) => Padding(
+        padding: const EdgeInsets.fromLTRB(22, 18, 22, 8),
+        child: Row(
+          children: [
+            Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+            const SizedBox(width: 8),
+            Text(
+              title.toUpperCase(),
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.1,
+                color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              '$count',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: color),
+            ),
+          ],
+        ),
+      );
+
+  /// Light greeting with a row of glance pills; the expiry pills double as quick filters.
+  Widget _buildHeader(List<QueryDocumentSnapshot<Map<String, dynamic>>> docs) {
+    final now = DateTime.now();
+    var expiringSoon = 0, expired = 0;
+    String? soonest;
+    int? soonestDays;
+    for (final d in docs) {
+      final data = d.data();
+      if (data['isFrozen'] == true) continue;
+      final days = _daysUntil(data);
+      if (days == null) continue;
+      if (days < 0) {
+        expired++;
+      } else if (days <= 3) {
+        expiringSoon++;
+        if (soonestDays == null || days < soonestDays) {
+          soonestDays = days;
+          soonest = (data['name'] ?? '').toString();
+        }
+      }
+    }
+    // A friendly nudge based on what's in the pantry right now.
+    final nudge = docs.isEmpty
+        ? 'Your pantry is empty. Add groceries to start tracking 🛒'
+        : soonest != null
+            ? 'Use your ${soonest.split(',').first} ${soonestDays == 0 ? 'today' : soonestDays == 1 ? 'tomorrow' : 'in the next few days'} 🍳'
+            : expired > 0
+                ? '$expired ${expired == 1 ? 'thing has' : 'things have'} expired, time for a quick check'
+                : "Everything's fresh 🌿";
+    final greeting = now.hour < 12 ? 'Good morning' : now.hour < 17 ? 'Good afternoon' : 'Good evening';
+    final name = user.isAnonymous ? null : user.displayName?.split(' ').first;
+    const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September',
+        'October', 'November', 'December'];
+    final dark = _themeService.isDarkMode;
+    final textColor = dark ? ThemeService.darkTextPrimary : ThemeService.lightTextPrimary;
+    final subColor = dark ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary;
+
+    Widget pill({
+      required IconData icon,
+      required Color color,
+      required int value,
+      required String label,
+      String? filter,
+    }) {
+      final active = filter != null && _quickFilter == filter;
+      return Padding(
+        padding: const EdgeInsets.only(right: 8),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 220),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: active ? (dark ? 0.32 : 0.24) : (dark ? 0.16 : 0.10)),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: active ? color : Colors.transparent, width: 1.2),
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(22),
+              onTap: filter == null ? null : () => setState(() => _quickFilter = active ? null : filter),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(icon, size: 15, color: color),
+                    const SizedBox(width: 6),
+                    CountUp(
+                      value.toDouble(),
+                      format: (v) => v.round().toString(),
+                      style: TextStyle(fontWeight: FontWeight.w800, color: color),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(label, style: TextStyle(color: subColor, fontSize: 13)),
+                    if (active) ...[
+                      const SizedBox(width: 4),
+                      Icon(Icons.close_rounded, size: 14, color: color),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, 8, 0, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${weekdays[now.weekday - 1]}, ${months[now.month - 1]} ${now.day}',
+                  style: TextStyle(color: subColor, fontSize: 13, fontWeight: FontWeight.w500),
+                ),
+                const SizedBox(height: 2),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        name == null ? greeting : '$greeting, $name',
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: textColor, fontSize: 26, fontWeight: FontWeight.w800, letterSpacing: -0.3),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    // Waves twice when the page opens
+                    TweenAnimationBuilder<double>(
+                      tween: Tween(begin: 0, end: 1),
+                      duration: const Duration(milliseconds: 1400),
+                      builder: (_, t, child) => Transform.rotate(
+                        angle: 0.45 * math.sin(t * 4 * math.pi) * (1 - t),
+                        alignment: const Alignment(0.3, 0.8),
+                        child: child,
+                      ),
+                      child: const Text('👋', style: TextStyle(fontSize: 26)),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 300),
+                  child: Text(
+                    nudge,
+                    key: ValueKey(nudge),
+                    style: TextStyle(color: subColor, fontSize: 14),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.fromLTRB(16, 6, 16, 10),
+            child: Row(
+              children: [
+                pill(icon: Icons.kitchen_rounded, color: const Color(0xFF4A90E2), value: docs.length, label: 'items'),
+                if (expiringSoon > 0 || _quickFilter == 'soon')
+                  pill(
+                    icon: Icons.schedule_rounded,
+                    color: const Color(0xFFF39C12),
+                    value: expiringSoon,
+                    label: 'expiring soon',
+                    filter: 'soon',
+                  ),
+                if (expired > 0 || _quickFilter == 'expired')
+                  pill(
+                    icon: Icons.error_outline_rounded,
+                    color: const Color(0xFFE74C3C),
+                    value: expired,
+                    label: 'expired',
+                    filter: 'expired',
+                  ),
+                const SpendingGlancePill(),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Search field with the filter button beside it; the button lights up while filters are active.
+  Widget _buildSearchRow() {
+    final dark = _themeService.isDarkMode;
+    final sub = dark ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary;
+    final fill = dark ? ThemeService.darkCardBackground : const Color(0xFFEEF1F4);
+    final filtersActive = _selectedFilters.isNotEmpty ||
+        _sortOption != 'expiry_asc' ||
+        _showFrozenItems ||
+        !_hideFrozenItems ||
+        _mustContainText.isNotEmpty;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Container(
+              height: 46,
+              decoration: BoxDecoration(color: fill, borderRadius: BorderRadius.circular(14)),
+              child: TextField(
+                onChanged: (value) => setState(() => _searchText = value),
+                style: TextStyle(color: dark ? ThemeService.darkTextPrimary : ThemeService.lightTextPrimary),
+                decoration: InputDecoration(
+                  hintText: 'Search your pantry',
+                  hintStyle: TextStyle(color: sub),
+                  prefixIcon: Icon(Icons.search_rounded, color: sub),
+                  suffixIcon: _searchText.isNotEmpty
+                      ? IconButton(
+                          icon: Icon(Icons.clear_rounded, color: sub),
+                          onPressed: () => setState(() => _searchText = ''),
+                        )
+                      : null,
+                  border: InputBorder.none,
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Tooltip(
+            message: _getFilterDisplayText(),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 220),
+              width: 46,
+              height: 46,
+              decoration: BoxDecoration(
+                color: const Color(0xFF4A90E2).withValues(alpha: filtersActive ? 0.3 : (dark ? 0.16 : 0.10)),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: filtersActive ? const Color(0xFF4A90E2) : Colors.transparent, width: 1.2),
+              ),
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(14),
+                  onTap: _showCompactFilters,
+                  child: const Icon(Icons.tune_rounded, size: 20, color: Color(0xFF4A90E2)),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildCarbonSavingsCard() {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: _db
@@ -3199,8 +3477,11 @@ class _EmptyStateState extends State<_EmptyState> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // Empty fridge icon
-            Container(
+            // Empty fridge icon, gently floating
+            Breathing(
+              pulse: false,
+              period: const Duration(milliseconds: 1600),
+              child: Container(
               padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
                 color: widget.isDarkMode
@@ -3215,7 +3496,7 @@ class _EmptyStateState extends State<_EmptyState> {
                     ? ThemeService.darkTextSecondary
                     : Colors.grey[400],
               ),
-            ),
+            )),
             const SizedBox(height: 24),
             Text(
               'Your fridge is empty',
@@ -3267,8 +3548,9 @@ class _EmptyStateState extends State<_EmptyState> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    Text(
-                      _formatCarbonValue(_carbonSaved),
+                    CountUp(
+                      _carbonSaved,
+                      format: _formatCarbonValue,
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 32,

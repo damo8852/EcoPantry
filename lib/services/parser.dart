@@ -181,15 +181,14 @@ Return JSON only: {"items": [{"name": "...", "quantity": 1, "type": "..."}]}''';
       }
 
       final requestBody = {
-        'model': 'gpt-4o-mini', // Fast, accurate, and cost-effective
+        'model': configService.openAiModel,
         'messages': [
           {
             'role': 'user',
             'content': prompt,
           }
         ],
-        'temperature': 0.1, // Low temperature for consistent parsing
-        'max_tokens': 1000, // Enough for receipt items
+        ...ConfigService().openAiSampling(temperature: 0.1, maxTokens: 1000),
       };
 
       // Enable JSON mode if requested
