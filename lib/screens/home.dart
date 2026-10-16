@@ -1,5 +1,6 @@
 ﻿import 'dart:io';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -2941,6 +2942,8 @@ Input: $input''';
   Widget _buildHeader(List<QueryDocumentSnapshot<Map<String, dynamic>>> docs) {
     final now = DateTime.now();
     var expiringSoon = 0, expired = 0;
+    String? soonest;
+    int? soonestDays;
     for (final d in docs) {
       final data = d.data();
       if (data['isFrozen'] == true) continue;
@@ -2950,8 +2953,20 @@ Input: $input''';
         expired++;
       } else if (days <= 3) {
         expiringSoon++;
+        if (soonestDays == null || days < soonestDays) {
+          soonestDays = days;
+          soonest = (data['name'] ?? '').toString();
+        }
       }
     }
+    // A friendly nudge based on what's in the pantry right now.
+    final nudge = docs.isEmpty
+        ? 'Your pantry is empty. Add groceries to start tracking 🛒'
+        : soonest != null
+            ? 'Use your ${soonest.split(',').first} ${soonestDays == 0 ? 'today' : soonestDays == 1 ? 'tomorrow' : 'in the next few days'} 🍳'
+            : expired > 0
+                ? '$expired ${expired == 1 ? 'thing has' : 'things have'} expired, time for a quick check'
+                : "Everything's fresh 🌿";
     final greeting = now.hour < 12 ? 'Good morning' : now.hour < 17 ? 'Good afternoon' : 'Good evening';
     final name = user.isAnonymous ? null : user.displayName?.split(' ').first;
     const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -2974,13 +2989,9 @@ Input: $input''';
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 220),
           decoration: BoxDecoration(
-            color: active ? color.withValues(alpha: 0.16) : (dark ? ThemeService.darkCardBackground : Colors.white),
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: active ? color : Colors.transparent, width: 1.5),
-            boxShadow: [
-              if (!active)
-                BoxShadow(color: Colors.black.withValues(alpha: dark ? 0.2 : 0.05), blurRadius: 8, offset: const Offset(0, 2)),
-            ],
+            color: color.withValues(alpha: active ? (dark ? 0.32 : 0.24) : (dark ? 0.16 : 0.10)),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: active ? color : Colors.transparent, width: 1.2),
           ),
           child: Material(
             color: Colors.transparent,
@@ -2988,16 +2999,16 @@ Input: $input''';
               borderRadius: BorderRadius.circular(22),
               onTap: filter == null ? null : () => setState(() => _quickFilter = active ? null : filter),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(icon, size: 16, color: color),
+                    Icon(icon, size: 15, color: color),
                     const SizedBox(width: 6),
                     CountUp(
                       value.toDouble(),
                       format: (v) => v.round().toString(),
-                      style: TextStyle(fontWeight: FontWeight.w800, color: textColor),
+                      style: TextStyle(fontWeight: FontWeight.w800, color: color),
                     ),
                     const SizedBox(width: 4),
                     Text(label, style: TextStyle(color: subColor, fontSize: 13)),
@@ -3029,17 +3040,45 @@ Input: $input''';
                   style: TextStyle(color: subColor, fontSize: 13, fontWeight: FontWeight.w500),
                 ),
                 const SizedBox(height: 2),
-                Text(
-                  name == null ? '$greeting 👋' : '$greeting, $name 👋',
-                  style: TextStyle(color: textColor, fontSize: 26, fontWeight: FontWeight.w800, letterSpacing: -0.3),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        name == null ? greeting : '$greeting, $name',
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: textColor, fontSize: 26, fontWeight: FontWeight.w800, letterSpacing: -0.3),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    // Waves twice when the page opens
+                    TweenAnimationBuilder<double>(
+                      tween: Tween(begin: 0, end: 1),
+                      duration: const Duration(milliseconds: 1400),
+                      builder: (_, t, child) => Transform.rotate(
+                        angle: 0.45 * math.sin(t * 4 * math.pi) * (1 - t),
+                        alignment: const Alignment(0.3, 0.8),
+                        child: child,
+                      ),
+                      child: const Text('👋', style: TextStyle(fontSize: 26)),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 300),
+                  child: Text(
+                    nudge,
+                    key: ValueKey(nudge),
+                    style: TextStyle(color: subColor, fontSize: 14),
+                  ),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 16),
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            padding: const EdgeInsets.fromLTRB(16, 6, 16, 10),
             child: Row(
               children: [
                 pill(icon: Icons.kitchen_rounded, color: const Color(0xFF4A90E2), value: docs.length, label: 'items'),
@@ -3071,22 +3110,22 @@ Input: $input''';
   /// Search field with the filter button beside it; the button lights up while filters are active.
   Widget _buildSearchRow() {
     final dark = _themeService.isDarkMode;
-    final card = dark ? ThemeService.darkCardBackground : Colors.white;
     final sub = dark ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary;
+    final fill = dark ? ThemeService.darkCardBackground : const Color(0xFFEEF1F4);
     final filtersActive = _selectedFilters.isNotEmpty ||
         _sortOption != 'expiry_asc' ||
         _showFrozenItems ||
         !_hideFrozenItems ||
         _mustContainText.isNotEmpty;
-    final shadow = [BoxShadow(color: Colors.black.withValues(alpha: dark ? 0.2 : 0.05), blurRadius: 8, offset: const Offset(0, 2))];
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
       child: Row(
         children: [
           Expanded(
             child: Container(
-              decoration: BoxDecoration(color: card, borderRadius: BorderRadius.circular(16), boxShadow: shadow),
+              height: 46,
+              decoration: BoxDecoration(color: fill, borderRadius: BorderRadius.circular(14)),
               child: TextField(
                 onChanged: (value) => setState(() => _searchText = value),
                 style: TextStyle(color: dark ? ThemeService.darkTextPrimary : ThemeService.lightTextPrimary),
@@ -3101,7 +3140,8 @@ Input: $input''';
                         )
                       : null,
                   border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
                 ),
               ),
             ),
@@ -3111,20 +3151,19 @@ Input: $input''';
             message: _getFilterDisplayText(),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 220),
+              width: 46,
+              height: 46,
               decoration: BoxDecoration(
-                color: filtersActive ? const Color(0xFF4A90E2) : card,
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: shadow,
+                color: const Color(0xFF4A90E2).withValues(alpha: filtersActive ? 0.3 : (dark ? 0.16 : 0.10)),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: filtersActive ? const Color(0xFF4A90E2) : Colors.transparent, width: 1.2),
               ),
               child: Material(
                 color: Colors.transparent,
                 child: InkWell(
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(14),
                   onTap: _showCompactFilters,
-                  child: Padding(
-                    padding: const EdgeInsets.all(14),
-                    child: Icon(Icons.tune_rounded, color: filtersActive ? Colors.white : const Color(0xFF4A90E2)),
-                  ),
+                  child: const Icon(Icons.tune_rounded, size: 20, color: Color(0xFF4A90E2)),
                 ),
               ),
             ),

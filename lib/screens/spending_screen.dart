@@ -148,21 +148,18 @@ class SpendingGlancePill extends StatelessWidget {
 
           return Container(
             decoration: BoxDecoration(
-              color: c.card,
-              borderRadius: BorderRadius.circular(22),
-              boxShadow: [
-                BoxShadow(color: Colors.black.withValues(alpha: c.dark ? 0.2 : 0.05), blurRadius: 8, offset: const Offset(0, 2)),
-              ],
+              color: _green.withValues(alpha: c.dark ? 0.16 : 0.10),
+              borderRadius: BorderRadius.circular(20),
             ),
             child: Material(
               color: Colors.transparent,
               child: InkWell(
-                borderRadius: BorderRadius.circular(22),
+                borderRadius: BorderRadius.circular(20),
                 onTap: empty
                     ? () => importKingSoopersPdf(context)
                     : () => Navigator.push(context, _fadeRoute(const SpendingScreen())),
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
