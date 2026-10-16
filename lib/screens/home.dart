@@ -18,6 +18,7 @@ import 'auth_gate.dart';
 import 'grocery_stores_screen.dart';
 import 'shopping_list_hub_screen.dart';
 import 'spending_screen.dart';
+import '../widgets/animations.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -2010,67 +2011,14 @@ class _HomePageState extends State<HomePage> {
                 return CustomScrollView(
                   slivers: [
                     // Welcome section
-                    SliverToBoxAdapter(
-                      child: Container(
-                        margin: const EdgeInsets.fromLTRB(16, 24, 16, 16),
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(
-                          gradient: _themeService.isDarkMode
-                            ? const LinearGradient(
-                                colors: [Color(0xFF2C3E50), Color(0xFF34495E)],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              )
-                            : const LinearGradient(
-                                colors: [Color(0xFF667eea), Color(0xFF764ba2)],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              ),
-                          borderRadius: BorderRadius.circular(20),
-                          boxShadow: [
-                            BoxShadow(
-                              color: (_themeService.isDarkMode ? const Color(0xFF2C3E50) : const Color(0xFF667eea)).withOpacity(0.3),
-                              blurRadius: 15,
-                              offset: const Offset(0, 5),
-                            ),
-                          ],
-                        ),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'Hi, ${user.isAnonymous ? 'Guest' : (user.displayName ?? 'you')}! 👋',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    'Manage your fridge items',
-                                    style: TextStyle(
-                                      color: Colors.white.withOpacity(0.8),
-                                      fontSize: 14,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+                    SliverToBoxAdapter(child: Entrance(index: 0, child: _buildWelcomeCard(docs))),
 
                     // Grocery spending this month
-                    const SliverToBoxAdapter(child: PantrySpendingCard()),
+                    const SliverToBoxAdapter(child: Entrance(index: 1, child: PantrySpendingCard())),
 
                     // Search Bar
                     SliverToBoxAdapter(
-                      child: Container(
+                      child: Entrance(index: 2, child: Container(
                         margin: const EdgeInsets.fromLTRB(16, 12, 16, 8),
                         decoration: BoxDecoration(
                           color: _themeService.isDarkMode ? ThemeService.darkCardBackground : ThemeService.lightCardBackground,
@@ -2111,11 +2059,11 @@ class _HomePageState extends State<HomePage> {
                           ),
                         ),
                       ),
-                    ),
+                    )),
 
                     // Filter Button
                     SliverToBoxAdapter(
-                      child: Container(
+                      child: Entrance(index: 3, child: Container(
                         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                         child: Container(
                           decoration: BoxDecoration(
@@ -2167,7 +2115,7 @@ class _HomePageState extends State<HomePage> {
                           ),
                         ),
                       ),
-                    ),
+                    )),
 
                     // Items list or empty state
                     if (docs.isEmpty)
@@ -2176,12 +2124,35 @@ class _HomePageState extends State<HomePage> {
                       )
                     else if (filteredDocs.isEmpty)
                       SliverFillRemaining(
-                        child: Center(
-                          child: Text(
-                            'No items found for this filter',
-                            style: TextStyle(
-                              color: _themeService.isDarkMode ? const Color(0xFF9E9E9E) : const Color(0xFF7F8C8D),
-                              fontSize: 16,
+                        hasScrollBody: false,
+                        child: Entrance(
+                          index: 4,
+                          child: Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Breathing(
+                                  pulse: false,
+                                  period: const Duration(milliseconds: 1600),
+                                  child: iconChip(Icons.search_off_rounded, const Color(0xFF4A90E2), size: 36, pad: 16),
+                                ),
+                                const SizedBox(height: 16),
+                                Text(
+                                  'No items match',
+                                  style: TextStyle(
+                                    color: _themeService.isDarkMode ? ThemeService.darkTextPrimary : ThemeService.lightTextPrimary,
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Try a different search or filter',
+                                  style: TextStyle(
+                                    color: _themeService.isDarkMode ? ThemeService.darkTextSecondary : ThemeService.lightTextSecondary,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ),
@@ -2199,7 +2170,8 @@ class _HomePageState extends State<HomePage> {
                           final itemId = sortedDocs[i].id;
                           final isSelected = _selectedItems.contains(itemId);
 
-                          return Container(
+                          final tile = AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
                             margin: const EdgeInsets.symmetric(horizontal: 16),
                             decoration: BoxDecoration(
                               color: _themeService.isDarkMode ? ThemeService.darkCardBackground : ThemeService.lightCardBackground,
@@ -2395,6 +2367,7 @@ class _HomePageState extends State<HomePage> {
                                   },
                                 ),
                           );
+                          return i < 12 ? Entrance(key: ValueKey(itemId), index: i + 4, child: tile) : tile;
                         },
                       ),
                       ),
@@ -2448,10 +2421,9 @@ Input: $input''';
             'Authorization': 'Bearer $apiKey',
           },
           body: json.encode({
-            'model': 'gpt-4o-mini',
+            'model': configService.openAiModel,
             'messages': [{'role': 'user', 'content': prompt}],
-            'temperature': 0.1,
-            'max_tokens': 1000,
+            ...ConfigService().openAiSampling(temperature: 0.1, maxTokens: 1000),
             'response_format': {'type': 'json_object'},
           }),
         ).timeout(const Duration(seconds: 15));
@@ -2971,6 +2943,132 @@ Input: $input''';
     }
   }
 
+  /// Greeting with live pantry stats: total items, expiring within 3 days, and expired (frozen items excluded).
+  Widget _buildWelcomeCard(List<QueryDocumentSnapshot<Map<String, dynamic>>> docs) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    var expiringSoon = 0, expired = 0;
+    for (final d in docs) {
+      final data = d.data();
+      if (data['isFrozen'] == true) continue;
+      final expiry = (data['expiryDate'] as Timestamp?)?.toDate();
+      if (expiry == null) continue;
+      final days = DateTime(expiry.year, expiry.month, expiry.day).difference(today).inDays;
+      if (days < 0) {
+        expired++;
+      } else if (days <= 3) {
+        expiringSoon++;
+      }
+    }
+    final greeting = now.hour < 12 ? 'Good morning' : now.hour < 17 ? 'Good afternoon' : 'Good evening';
+    final name = user.isAnonymous ? 'Guest' : (user.displayName?.split(' ').first ?? 'there');
+    const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September',
+        'October', 'November', 'December'];
+    final dark = _themeService.isDarkMode;
+
+    Widget stat(String label, int value, IconData icon, Color tint) => Expanded(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(icon, size: 14, color: tint),
+                    const SizedBox(width: 4),
+                    CountUp(
+                      value.toDouble(),
+                      format: (v) => v.round().toString(),
+                      style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.85), fontSize: 11)),
+              ],
+            ),
+          ),
+        );
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: dark ? const [Color(0xFF2C3E50), Color(0xFF3A4F66)] : const [Color(0xFF667eea), Color(0xFF764ba2)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: (dark ? const Color(0xFF2C3E50) : const Color(0xFF667eea)).withValues(alpha: 0.35),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Stack(
+        children: [
+          // Soft decorative circles
+          Positioned(
+            right: -30,
+            top: -40,
+            child: Breathing(
+              period: const Duration(seconds: 4),
+              child: CircleAvatar(radius: 70, backgroundColor: Colors.white.withValues(alpha: 0.08)),
+            ),
+          ),
+          Positioned(
+            right: 60,
+            bottom: -50,
+            child: CircleAvatar(radius: 45, backgroundColor: Colors.white.withValues(alpha: 0.06)),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${weekdays[now.weekday - 1]}, ${months[now.month - 1]} ${now.day}'.toUpperCase(),
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.75),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 1.1,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '$greeting, $name 👋',
+                  style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    stat('in your pantry', docs.length, Icons.kitchen_rounded, Colors.white),
+                    const SizedBox(width: 8),
+                    stat('expiring soon', expiringSoon, Icons.schedule_rounded, const Color(0xFFFFD180)),
+                    const SizedBox(width: 8),
+                    stat('expired', expired, Icons.error_outline_rounded, const Color(0xFFFF8A80)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildCarbonSavingsCard() {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: _db
@@ -3275,8 +3373,11 @@ class _EmptyStateState extends State<_EmptyState> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // Empty fridge icon
-            Container(
+            // Empty fridge icon, gently floating
+            Breathing(
+              pulse: false,
+              period: const Duration(milliseconds: 1600),
+              child: Container(
               padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
                 color: widget.isDarkMode
@@ -3291,7 +3392,7 @@ class _EmptyStateState extends State<_EmptyState> {
                     ? ThemeService.darkTextSecondary
                     : Colors.grey[400],
               ),
-            ),
+            )),
             const SizedBox(height: 24),
             Text(
               'Your fridge is empty',
@@ -3343,8 +3444,9 @@ class _EmptyStateState extends State<_EmptyState> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    Text(
-                      _formatCarbonValue(_carbonSaved),
+                    CountUp(
+                      _carbonSaved,
+                      format: _formatCarbonValue,
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 32,

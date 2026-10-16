@@ -21,8 +21,6 @@ class BudgetService {
   BudgetService._internal();
 
   static const String _baseUrl = 'https://api.openai.com/v1';
-  // Must be a model that accepts PDF file input.
-  static const String _model = 'gpt-4o-mini';
 
   final _db = FirebaseFirestore.instance;
   final _configService = ConfigService();
@@ -112,6 +110,7 @@ class BudgetService {
       switch (item.category) {
         SpendCategory.produce => GroceryType.vegetable,
         SpendCategory.meatSeafood => GroceryType.meat,
+        SpendCategory.plantProtein => GroceryType.other,
         SpendCategory.dairyEggs => GroceryType.dairy,
         SpendCategory.bakery => GroceryType.grain,
         SpendCategory.pantry => GroceryType.condiment,
@@ -244,7 +243,7 @@ Trip summary (from the order summary / totals section; 0 if not shown):
 Other:
 - Expand abbreviated product names into readable ones (e.g. "KRO 2% MLK GAL" -> "Kroger 2% Milk, Gallon").
 - Ignore payment lines, fuel points, balances, barcodes and ads.
-- "category" must be one of: ${SpendCategory.promptKeys}. Tofu, tempeh and other plant proteins are meatSeafood.
+- "category" must be one of: ${SpendCategory.promptKeys}. Tofu, tempeh, seitan and other plant-based proteins are plantProtein.
 - "pantryType": for food or drink that gets stored at home, one of: ${GroceryType.values.map((t) => t.name).join(', ')}.
   Use null for anything that is not food (household, personal care, fuel, bags, deposits).
 - "expiryDays": for food, typical days until it should be used if stored normally (milk 7, bananas 5,
@@ -325,10 +324,9 @@ Other:
     if (apiKey == null) throw BudgetImportException('OpenAI API key is not configured.');
 
     final body = <String, dynamic>{
-      'model': _model,
+      'model': _configService.openAiModel,
       'messages': messages,
-      'temperature': temperature,
-      'max_tokens': maxTokens,
+      ...ConfigService().openAiSampling(temperature: temperature, maxTokens: maxTokens),
       if (json) 'response_format': {'type': 'json_object'},
     };
 

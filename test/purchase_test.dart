@@ -32,8 +32,8 @@ Map<String, dynamic> oct13Invoice() => {
         item('Ketchup', 1.25, 0.34, 'pantry'),
         item('Salsa', 2.99, 0, 'pantry'),
         item('Clementines', 2.49, 3.50, 'produce'),
-        item('Firm Tofu', 1.99, 0, 'meatSeafood'),
-        item('Silken Tofu', 1.99, 0, 'meatSeafood'),
+        item('Firm Tofu', 1.99, 0, 'plantProtein'),
+        item('Silken Tofu', 1.99, 0, 'plantProtein'),
         item('Chicken Breast Tenders', 7.92, 0, 'meatSeafood'),
         item('Chicken Breast Tenders', 0.00, 7.79, 'meatSeafood'),
         item('Tortillas', 2.14, 2.15, 'bakery'),
@@ -50,8 +50,9 @@ void main() {
     expect(totals[SpendCategory.tax], closeTo(2.91, 0.001));
     expect(totals[SpendCategory.orderCoupons], closeTo(-2.00, 0.001));
     expect(totals.containsKey(SpendCategory.other), isFalse);
-    // ground beef 6.14 + chicken 7.92 + two tofus 3.98
-    expect(totals[SpendCategory.meatSeafood], closeTo(18.04, 0.001));
+    // ground beef 6.14 + chicken 7.92; the two tofus go to plant protein
+    expect(totals[SpendCategory.meatSeafood], closeTo(14.06, 0.001));
+    expect(totals[SpendCategory.plantProtein], closeTo(3.98, 0.001));
     expect(p.savings, 43.27);
     expect(p.itemDiscounts, 37.32);
     expect(p.couponSavings, 2.00);
@@ -86,6 +87,8 @@ void main() {
     expect(back.fees, 1.01);
     expect(back.items.first.listPrice, closeTo(0.99, 0.001));
     expect(SpendCategory.fromName('Meat & Seafood'), SpendCategory.meatSeafood);
+    expect(SpendCategory.fromName('Meat & Protein'), SpendCategory.meatSeafood);
+    expect(SpendCategory.fromName('Plant Protein'), SpendCategory.plantProtein);
     expect(SpendCategory.fromName('tax'), SpendCategory.other);
   });
 }

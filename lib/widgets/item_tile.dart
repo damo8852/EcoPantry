@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import 'animations.dart';
 import '../models/grocery_type.dart';
 
 class ItemTile extends StatelessWidget {
@@ -130,7 +132,8 @@ class ItemTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final dateStr = expiry != null ? expiry!.toLocal().toString().split(' ').first : '—';
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    final dateStr = expiry != null ? '${months[expiry!.month - 1]} ${expiry!.day}' : '—';
     int? daysLeft;
     if (expiry != null) {
       final today = DateTime.now();
@@ -140,7 +143,15 @@ class ItemTile extends StatelessWidget {
     
     final chip = daysLeft == null
         ? 'no date'
-        : (daysLeft <= 0 ? 'today' : daysLeft == 1 ? 'in 1 day' : 'in $daysLeft days');
+        : daysLeft < -1
+            ? 'expired ${-daysLeft} days ago'
+            : daysLeft == -1
+                ? 'expired yesterday'
+                : daysLeft == 0
+                    ? 'today'
+                    : daysLeft == 1
+                        ? 'tomorrow'
+                        : 'in $daysLeft days';
     
     final chipColor = daysLeft == null
         ? const Color(0xFF95A5A6)
@@ -255,7 +266,7 @@ class ItemTile extends StatelessWidget {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    'Qty',
+                                    '${usagePercentage.round()}% left',
                                     style: TextStyle(
                                       fontSize: 10,
                                       color: _getUsageColor(usagePercentage),
@@ -515,6 +526,7 @@ class ItemTile extends StatelessWidget {
                           fontWeight: FontWeight.w600,
                           color: isDarkMode ? const Color(0xFFE8E8E8) : const Color(0xFF2C3E50),
                         ),
+                        maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
@@ -582,7 +594,7 @@ class ItemTile extends StatelessWidget {
                     ),
                     const SizedBox(width: 4),
                     Text(
-                      'Qty',
+                      quantity > 1 ? '×$quantity · ${usagePercentage.round()}% left' : '${usagePercentage.round()}% left',
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w500,
@@ -591,17 +603,12 @@ class ItemTile extends StatelessWidget {
                     ),
                     const SizedBox(width: 8),
                     SizedBox(
-                      width: 100,
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(4),
-                        child: LinearProgressIndicator(
-                          value: (usagePercentage / 100).clamp(0.0, 1.0),
-                          backgroundColor: _getUsageColor(usagePercentage).withOpacity(0.2),
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            _getUsageColor(usagePercentage),
-                          ),
-                          minHeight: 4,
-                        ),
+                      width: 80,
+                      child: GrowBar(
+                        fraction: usagePercentage / 100,
+                        color: _getUsageColor(usagePercentage),
+                        track: _getUsageColor(usagePercentage).withValues(alpha: 0.2),
+                        height: 4,
                       ),
                     ),
                   ],
@@ -616,7 +623,7 @@ class ItemTile extends StatelessWidget {
                     ),
                     const SizedBox(width: 4),
                     Text(
-                      'Expires: $dateStr',
+                      dateStr,
                       style: TextStyle(
                         fontSize: 12,
                         color: isDarkMode ? const Color(0xFF9E9E9E) : const Color(0xFF7F8C8D),

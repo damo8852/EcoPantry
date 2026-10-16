@@ -6,7 +6,8 @@ import 'grocery_type.dart';
 /// Spending categories used to group King Soopers line items.
 enum SpendCategory {
   produce('Produce', Icons.eco_rounded, Color(0xFF27AE60)),
-  meatSeafood('Meat & Protein', Icons.set_meal_rounded, Color(0xFFE74C3C)),
+  meatSeafood('Meat & Seafood', Icons.set_meal_rounded, Color(0xFFE74C3C)),
+  plantProtein('Plant Protein', Icons.grass_rounded, Color(0xFF7CB342)),
   dairyEggs('Dairy & Eggs', Icons.egg_rounded, Color(0xFF3498DB)),
   bakery('Bakery', Icons.bakery_dining_rounded, Color(0xFFD68910)),
   pantry('Pantry', Icons.kitchen_rounded, Color(0xFF8E44AD)),
@@ -38,8 +39,7 @@ enum SpendCategory {
         return c;
       }
     }
-    // Older imports stored the label "Meat & Seafood".
-    if (n == 'meatseafood') return SpendCategory.meatSeafood;
+    if (n == 'meatprotein') return SpendCategory.meatSeafood; // label used briefly before Plant Protein existed
     return SpendCategory.other;
   }
 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/theme_service.dart';
+import '../services/config_service.dart';
 import '../services/auth.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -13,6 +14,7 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   final ThemeService _themeService = ThemeService();
+  final ConfigService _configService = ConfigService();
   final _auth = FirebaseAuth.instance;
   final _db = FirebaseFirestore.instance;
 
@@ -126,6 +128,75 @@ class _SettingsPageState extends State<SettingsPage> {
       {'label': '🍃 Organic', 'value': 'organic'},
       {'label': '⚡ Quick Meals', 'value': 'quick_meals'},
     ];
+  }
+
+  /// Lets the user pick any chat model their OpenAI key can use.
+  Future<void> _pickAiModel() async {
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.of(ctx).size.height * 0.7,
+          child: FutureBuilder<List<String>>(
+            future: _configService.listOpenAiModels(),
+            builder: (ctx, snap) {
+              final header = Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('OpenAI model', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Larger models read receipts more reliably but cost more per request. '
+                      'Receipt import needs a model that accepts PDF files.',
+                      style: TextStyle(fontSize: 12, color: Theme.of(ctx).hintColor),
+                    ),
+                  ],
+                ),
+              );
+              if (snap.hasError) {
+                return Column(children: [
+                  header,
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text('Could not load models: ${snap.error}'),
+                  ),
+                ]);
+              }
+              if (!snap.hasData) {
+                return Column(children: [header, const Expanded(child: Center(child: CircularProgressIndicator()))]);
+              }
+              final models = {ConfigService.defaultOpenAiModel, ...snap.data!}.toList();
+              return Column(
+                children: [
+                  header,
+                  Expanded(
+                    child: ListView(
+                      children: [
+                        for (final m in models)
+                          ListTile(
+                            title: Text(m),
+                            subtitle: m == ConfigService.defaultOpenAiModel ? const Text('Default') : null,
+                            trailing: m == _configService.openAiModel
+                                ? const Icon(Icons.check_rounded, color: ThemeService.primaryColor)
+                                : null,
+                            onTap: () => Navigator.pop(ctx, m),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    if (picked == null) return;
+    await _configService.setOpenAiModel(picked);
+    if (mounted) setState(() {});
   }
 
   Future<void> _logout() async {
@@ -320,6 +391,63 @@ class _SettingsPageState extends State<SettingsPage> {
                     activeColor: ThemeService.primaryColor,
                     contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     dense: true,
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // AI Section
+          Card(
+            color: _themeService.isDarkMode
+                ? ThemeService.darkCard
+                : ThemeService.lightCard,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'AI',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: _themeService.isDarkMode
+                          ? ThemeService.darkTextPrimary
+                          : ThemeService.lightTextPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                    title: Text(
+                      'OpenAI model',
+                      style: TextStyle(
+                        fontSize: 15,
+                        color: _themeService.isDarkMode
+                            ? ThemeService.darkTextPrimary
+                            : ThemeService.lightTextPrimary,
+                      ),
+                    ),
+                    subtitle: Text(
+                      '${_configService.openAiModel}\nUsed for receipt imports, scanning, recipes and the budget coach',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: _themeService.isDarkMode
+                            ? ThemeService.darkTextSecondary
+                            : ThemeService.lightTextSecondary,
+                      ),
+                    ),
+                    isThreeLine: true,
+                    trailing: Icon(
+                      Icons.chevron_right_rounded,
+                      color: _themeService.isDarkMode
+                          ? ThemeService.darkTextSecondary
+                          : ThemeService.lightTextSecondary,
+                    ),
+                    onTap: _pickAiModel,
                   ),
                 ],
               ),
