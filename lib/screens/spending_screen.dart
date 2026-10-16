@@ -119,12 +119,12 @@ class _Palette {
 }
 
 // =============================================================================
-// Pantry home card
+// Pantry header pill
 // =============================================================================
 
-/// Compact "spent this month" card shown on the Pantry home. Tap for the full breakdown.
-class PantrySpendingCard extends StatelessWidget {
-  const PantrySpendingCard({super.key});
+/// Pill in the Pantry header: this month's grocery spend and savings. Tap for the full breakdown.
+class SpendingGlancePill extends StatelessWidget {
+  const SpendingGlancePill({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -138,78 +138,60 @@ class PantrySpendingCard extends StatelessWidget {
         stream: service.watchPurchases(),
         builder: (context, snap) {
           if (snap.hasError || !snap.hasData) return const SizedBox.shrink();
-          final budget = budgetSnap.data;
           final empty = snap.data!.isEmpty;
           final thisMonth = snap.data!.where((p) => _inMonth(p, now));
           final spent = thisMonth.fold<double>(0, (a, p) => a + p.total);
           final saved = thisMonth.fold<double>(0, (a, p) => a + p.savings);
-          final ratio = budget != null && budget > 0 ? spent / budget : null;
-          final barColor = _budgetColor(ratio);
+          final budget = budgetSnap.data;
+          final color = _budgetColor(budget != null && budget > 0 ? spent / budget : null);
+          final month = _monthNames[now.month - 1].substring(0, 3);
 
           return Container(
-              margin: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-              decoration: c.cardDecoration(radius: 16),
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(16),
-                  onTap: empty
-                      ? () => importKingSoopersPdf(context)
-                      : () => Navigator.push(context, _fadeRoute(const SpendingScreen())),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Row(
-                      children: [
-                        Hero(
-                          tag: _walletHeroTag,
-                          child: iconChip(Icons.account_balance_wallet_rounded, barColor, size: 20),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: empty
-                              ? Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text('Track grocery spending',
-                                        style: TextStyle(color: c.text, fontWeight: FontWeight.w600)),
-                                    const SizedBox(height: 2),
-                                    Text('Import a King Soopers PDF to stock your pantry and see where your money goes',
-                                        style: TextStyle(color: c.subtext, fontSize: 12)),
-                                  ],
-                                )
-                              : Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Text('${_monthNames[now.month - 1]} groceries',
-                                            style: TextStyle(color: c.subtext, fontSize: 12)),
-                                        const Spacer(),
-                                        CountUp(spent, style: TextStyle(color: c.text, fontWeight: FontWeight.bold)),
-                                        if (budget != null)
-                                          Text(' / ${_money(budget)}', style: TextStyle(color: c.subtext, fontSize: 12)),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 8),
-                                    GrowBar(fraction: ratio ?? 0, color: barColor, track: c.track, height: 6),
-                                    const SizedBox(height: 6),
-                                    Text(
-                                      [
-                                        if (saved > 0) 'Saved ${_money(saved)} with deals & coupons',
-                                        if (budget == null) 'Tap to set a budget',
-                                      ].join(' · '),
-                                      style: TextStyle(color: c.subtext, fontSize: 11),
-                                    ),
-                                  ],
-                                ),
-                        ),
+            decoration: BoxDecoration(
+              color: c.card,
+              borderRadius: BorderRadius.circular(22),
+              boxShadow: [
+                BoxShadow(color: Colors.black.withValues(alpha: c.dark ? 0.2 : 0.05), blurRadius: 8, offset: const Offset(0, 2)),
+              ],
+            ),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(22),
+                onTap: empty
+                    ? () => importKingSoopersPdf(context)
+                    : () => Navigator.push(context, _fadeRoute(const SpendingScreen())),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Hero(
+                        tag: _walletHeroTag,
+                        child: Icon(Icons.account_balance_wallet_rounded, size: 16, color: color),
+                      ),
+                      const SizedBox(width: 6),
+                      if (empty)
+                        Text('Track spending', style: TextStyle(color: c.text, fontWeight: FontWeight.w600, fontSize: 13))
+                      else ...[
+                        CountUp(spent,
+                            format: (v) => '\$${v.round()}',
+                            style: TextStyle(fontWeight: FontWeight.w800, color: c.text)),
                         const SizedBox(width: 4),
-                        Icon(Icons.chevron_right_rounded, color: c.subtext),
+                        Text('in $month', style: TextStyle(color: c.subtext, fontSize: 13)),
+                        if (saved > 0) ...[
+                          const SizedBox(width: 6),
+                          Text('· saved \$${saved.round()}',
+                              style: const TextStyle(color: _green, fontSize: 13, fontWeight: FontWeight.w600)),
+                        ],
                       ],
-                    ),
+                      const SizedBox(width: 2),
+                      Icon(Icons.chevron_right_rounded, size: 16, color: c.subtext),
+                    ],
                   ),
                 ),
               ),
+            ),
           );
         },
       ),
