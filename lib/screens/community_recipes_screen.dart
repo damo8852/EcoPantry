@@ -3,8 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/theme_service.dart';
-import '../services/subscription_service.dart';
-import '../widgets/upgrade_dialog.dart';
 
 class CommunityRecipesScreen extends StatefulWidget {
   const CommunityRecipesScreen({super.key});
@@ -23,8 +21,6 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
   String _styleFilter = 'all';
   String _cuisineFilter = 'all';
 
-  bool _isCheckingAccess = true;
-  bool _hasAccess = false;
 
   User? get user => _auth.currentUser;
 
@@ -32,17 +28,6 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
   void initState() {
     super.initState();
     _themeService.addListener(_onThemeChanged);
-    _checkCommunityRecipesAccess();
-  }
-
-  Future<void> _checkCommunityRecipesAccess() async {
-    final hasAccess = await SubscriptionService.instance.canAccessCommunityRecipes();
-    if (mounted) {
-      setState(() {
-        _hasAccess = hasAccess;
-        _isCheckingAccess = false;
-      });
-    }
   }
 
   void _onThemeChanged() {
@@ -55,10 +40,6 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
   void dispose() {
     _themeService.removeListener(_onThemeChanged);
     super.dispose();
-  }
-
-  Future<void> _handleUpgrade() async {
-    await showCommunityRecipesUpgradeDialog(context);
   }
 
   bool _matchesFilters(Map<String, dynamic> recipe) {
@@ -488,172 +469,6 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
   @override
   Widget build(BuildContext context) {
     // Show loading state while checking access
-    if (_isCheckingAccess) {
-      return Scaffold(
-        backgroundColor: _themeService.isDarkMode
-            ? ThemeService.darkBackground
-            : ThemeService.lightBackground,
-        appBar: AppBar(
-          title: Text(
-            'Community Recipes',
-            style: TextStyle(
-              color: _themeService.isDarkMode
-                  ? ThemeService.darkTextPrimary
-                  : ThemeService.lightTextPrimary,
-            ),
-          ),
-          backgroundColor: _themeService.isDarkMode
-              ? ThemeService.darkBackground
-              : ThemeService.lightBackground,
-          elevation: 0,
-          iconTheme: IconThemeData(
-            color: _themeService.isDarkMode
-                ? ThemeService.darkTextPrimary
-                : ThemeService.lightTextPrimary,
-          ),
-        ),
-        body: const Center(child: CircularProgressIndicator()),
-      );
-    }
-
-    // Show upgrade screen if no access
-    if (!_hasAccess) {
-      return Scaffold(
-        backgroundColor: _themeService.isDarkMode
-            ? ThemeService.darkBackground
-            : ThemeService.lightBackground,
-        appBar: AppBar(
-          title: Text(
-            'Community Recipes',
-            style: TextStyle(
-              color: _themeService.isDarkMode
-                  ? ThemeService.darkTextPrimary
-                  : ThemeService.lightTextPrimary,
-            ),
-          ),
-          backgroundColor: _themeService.isDarkMode
-              ? ThemeService.darkBackground
-              : ThemeService.lightBackground,
-          elevation: 0,
-          iconTheme: IconThemeData(
-            color: _themeService.isDarkMode
-                ? ThemeService.darkTextPrimary
-                : ThemeService.lightTextPrimary,
-          ),
-        ),
-        body: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(32),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(24),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFFFFD700), Color(0xFFFFA500)],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    borderRadius: BorderRadius.circular(24),
-                  ),
-                  child: const Icon(
-                    Icons.workspace_premium,
-                    color: Colors.white,
-                    size: 64,
-                  ),
-                ),
-                const SizedBox(height: 24),
-                Text(
-                  'Premium Feature',
-                  style: TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                    color: _themeService.isDarkMode
-                        ? ThemeService.darkTextPrimary
-                        : const Color(0xFF2C3E50),
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'Community recipes are available with Premium.\nDiscover and share recipes with thousands of users!',
-                  style: TextStyle(
-                    fontSize: 16,
-                    color: _themeService.isDarkMode
-                        ? ThemeService.darkTextSecondary
-                        : const Color(0xFF7F8C8D),
-                    height: 1.5,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 32),
-
-                // Premium Benefits List
-                _buildBenefitItem(
-                  '✨ Unlimited Recipe Generation',
-                  'Generate as many recipes as you want',
-                ),
-                const SizedBox(height: 16),
-                _buildBenefitItem(
-                  '🛒 Shopping List Access',
-                  'Full access to shopping list features',
-                ),
-                const SizedBox(height: 16),
-                _buildBenefitItem(
-                  '👥 Community Recipes',
-                  'Access and share recipes with the community',
-                ),
-                const SizedBox(height: 16),
-                _buildBenefitItem(
-                  '📸 Unlimited Receipt Scanning',
-                  'Scan as many receipts as you want',
-                ),
-                const SizedBox(height: 16),
-                _buildBenefitItem(
-                  '🎯 Priority Support',
-                  'Get help faster when you need it',
-                ),
-                const SizedBox(height: 16),
-                _buildBenefitItem(
-                  '🚀 Future Features',
-                  'First access to new premium features',
-                ),
-                const SizedBox(height: 32),
-
-                ElevatedButton(
-                  onPressed: _handleUpgrade,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFFFD700),
-                    foregroundColor: const Color(0xFF2C3E50),
-                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: const [
-                      Icon(Icons.workspace_premium, size: 24),
-                      SizedBox(width: 8),
-                      Text(
-                        'Upgrade to Premium',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-
-    // Show community recipes for premium users
     return Scaffold(
       backgroundColor: _themeService.isDarkMode
           ? ThemeService.darkBackground
@@ -1470,54 +1285,6 @@ class _CommunityRecipesScreenState extends State<CommunityRecipesScreen> {
     );
   }
 
-  Widget _buildBenefitItem(String title, String description) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          margin: const EdgeInsets.only(top: 2),
-          padding: const EdgeInsets.all(6),
-          decoration: BoxDecoration(
-            color: const Color(0xFFFFD700).withOpacity(0.15),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: const Icon(
-            Icons.check_circle,
-            color: Color(0xFFFFD700),
-            size: 20,
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: TextStyle(
-                  color: _themeService.isDarkMode
-                      ? ThemeService.darkTextPrimary
-                      : const Color(0xFF2C3E50),
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                description,
-                style: TextStyle(
-                  color: _themeService.isDarkMode
-                      ? ThemeService.darkTextSecondary
-                      : const Color(0xFF7F8C8D),
-                  fontSize: 14,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
 }
 
 // Comments Widget

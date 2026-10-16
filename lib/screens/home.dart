@@ -17,6 +17,7 @@ import 'collections_screen.dart';
 import 'auth_gate.dart';
 import 'grocery_stores_screen.dart';
 import 'shopping_list_hub_screen.dart';
+import 'spending_screen.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -1609,6 +1610,78 @@ class _HomePageState extends State<HomePage> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
+            // Import King Soopers PDF button
+            AnimatedScale(
+              scale: _isFabMenuOpen ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+              child: AnimatedOpacity(
+                opacity: _isFabMenuOpen ? 1.0 : 0.0,
+                duration: const Duration(milliseconds: 200),
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 12.0),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFFE67E22), Color(0xFFD35400)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(8),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFFE67E22).withOpacity(0.3),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: const Text(
+                          'Import King Soopers PDF',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Container(
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFFE67E22), Color(0xFFD35400)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(30),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFFE67E22).withOpacity(0.4),
+                              blurRadius: 12,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: FloatingActionButton(
+                          onPressed: () {
+                            setState(() => _isFabMenuOpen = false);
+                            importKingSoopersPdf(context);
+                          },
+                          backgroundColor: Colors.transparent,
+                          elevation: 0,
+                          heroTag: "kingsoopers_pdf_fab",
+                          child: const Icon(Icons.picture_as_pdf_rounded, color: Colors.white),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
             // Scan Receipt button
             AnimatedScale(
               scale: _isFabMenuOpen ? 1.0 : 0.0,
@@ -1991,6 +2064,9 @@ class _HomePageState extends State<HomePage> {
                         ),
                       ),
                     ),
+
+                    // Grocery spending this month
+                    const SliverToBoxAdapter(child: PantrySpendingCard()),
 
                     // Search Bar
                     SliverToBoxAdapter(

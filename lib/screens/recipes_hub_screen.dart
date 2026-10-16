@@ -4,9 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/theme_service.dart';
 import '../services/llm_service.dart';
-import '../services/subscription_service.dart';
 import '../models/recipe.dart';
-import '../widgets/upgrade_dialog.dart';
 import 'create_recipe_screen.dart';
 import 'saved_recipes_screen.dart';
 import 'community_recipes_screen.dart';
@@ -43,25 +41,6 @@ class _RecipesHubScreenState extends State<RecipesHubScreen> {
   Future<void> _generateAIRecipes() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
-
-    // Check if user can generate recipes
-    final canGenerate = await SubscriptionService.instance.canGenerateRecipes();
-    if (!canGenerate) {
-      final remaining = await SubscriptionService.instance.getRemainingRecipesToday();
-      if (mounted) {
-        final shouldUpgrade = await showRecipeLimitUpgradeDialog(context, remaining);
-        if (shouldUpgrade) {
-          // Navigate to settings or show upgrade options
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Premium upgrade coming soon! Contact support for early access.'),
-              duration: Duration(seconds: 3),
-            ),
-          );
-        }
-      }
-      return;
-    }
 
     // Show recipe preferences dialog
     String recipeMode = 'any';
@@ -389,9 +368,6 @@ class _RecipesHubScreenState extends State<RecipesHubScreen> {
         strictMode: isStrictMode,
         dietPreferences: dietPreferences.isNotEmpty ? dietPreferences : null,
       );
-
-      // Increment recipe generation count for free users
-      await SubscriptionService.instance.incrementRecipeCount();
 
       if (!mounted) return;
       Navigator.of(context).pop(); // Close loading dialog
